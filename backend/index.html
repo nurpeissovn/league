@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>League Tracker</title>
+<style>
+body { font-family: Arial; background: #f0f4ff; padding: 20px; }
+h1 { text-align: center; }
+.card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+input, select { padding: 5px; margin: 5px; }
+button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer;}
+button:hover { background: #1e40af; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px;}
+th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+th { background: #f9f9f9; }
+/* Fireworks */
+.particle { position:absolute; width:6px; height:6px; background:orange; border-radius:50%; pointer-events:none; animation: explode 700ms ease-out forwards;}
+@keyframes explode { from {transform: translate(0,0) scale(1); opacity:1;} to {transform: translate(var(--x), var(--y)) scale(0.5); opacity:0;} }
+.done-text { position:absolute; top:150px; left:50%; transform:translateX(-50%); font-size:24px; color:green; font-weight:bold; }
+.tables-container {
+  display: flex;
+  gap: 20px;          /* space between the two tables */
+  flex-wrap: wrap;     /* wrap on small screens */
+}
+.tables-container .card {
+  flex: 1;             /* equal width */
+  min-width: 300px;    /* avoid shrinking too much */
+}
+
+
+
+</style>
+</head>
+<body>
+<h1>⚽ League Tracker</h1>
+
+<!-- Match Input -->
+<div class="card">
+    <h2>Enter Match Result</h2>
+    <div class="flex-row">
+      <div class="input-group">
+        <label>Team 1:</label>
+        <select id="team1"></select>
+        <input id="score1" type="number" value="0" min="0">
+      </div>
+      <div class="input-group">
+        <label>Team 2:</label>
+        <select id="team2"></select>
+        <input id="score2" type="number" value="0" min="0">
+      </div>
+      <button onclick="handleSubmit()">Submit Match</button>
+      <button onclick="undoMatch()">Undo Last Match</button>
+    </div>
+  </div>
+  
+  <!-- Player Stats Input -->
+  <div class="card">
+    <h2>Add Player Statistics</h2>
+    <div class="flex-row">
+      <div class="input-group">
+        <label>Player:</label>
+        <select id="playerSelectInput"></select>
+      </div>
+      <div class="input-group">
+        <label>Goals ⚽:</label>
+        <input id="goals" type="number" value="0" min="0">
+      </div>
+      <div class="input-group">
+        <label>Assists 🎯:</label>
+        <input id="assists" type="number" value="0" min="0">
+      </div>
+      <button onclick="addPlayerStats()">Add Stats</button>
+    </div>
+  </div>
+  
+  
+
+  <div class="tables-container">
+    <div class="card" style="flex:1">
+      <h2>👤 Player Statistics</h2>
+      <table id="playerTable">
+        <thead>
+          <tr><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Total (G+A)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  
+    <div class="card" style="flex:1">
+      <h2>🏟️ Team Statistics</h2>
+      <table id="teamTable">
+        <thead>
+          <tr><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  
+
+<div class="card">
+<h2>📜 Match History</h2>
+<table id="historyTable">
+<thead><tr><th>Match</th><th>Score</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+
+<script>
+// Load teams & players from localStorage
+const stored = JSON.parse(localStorage.getItem("leagueTeams") || "{}");
+
+const teams = {};
+const players = {};
+for(const t in stored){
+  teams[t] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+  stored[t].forEach(p=>{
+    players[p] = {team:t, goals:0, assists:0};
+  });
+}
+
+const history = [];
+let lastTeam1=null, lastTeam2=null, lastPlayer=null;
+
+function handleSubmit() {
+  // first update local tables
+  submitMatch();
+
+  // then save to backend
+  const t1 = document.getElementById("team1").value;
+  const t2 = document.getElementById("team2").value;
+  const s1 = parseInt(document.getElementById("score1").value) || 0;
+  const s2 = parseInt(document.getElementById("score2").value) || 0;
+
+  fetch("http://localhost:8080/add-match", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      team1_id: Object.keys(teams).indexOf(t1) + 1, // simple mapping team name → ID
+      team2_id: Object.keys(teams).indexOf(t2) + 1,
+      score1: s1,
+      score2: s2
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    console.log("Match saved:", data);
+    fireworks("Done ✅"); // show fireworks after saving
+  })
+  .catch(err => console.error("Error saving match:", err));
+}
+
+function submitMatch(){
+  const t1=document.getElementById("team1").value;
+  const t2=document.getElementById("team2").value;
+  const s1=parseInt(document.getElementById("score1").value)||0;
+  const s2=parseInt(document.getElementById("score2").value)||0;
+  if(t1===t2){ alert("Team cannot play itself!"); return; }
+
+  teams[t1].P++; teams[t2].P++;
+  teams[t1].GF+=s1; teams[t1].GA+=s2;
+  teams[t2].GF+=s2; teams[t2].GA+=s1;
+
+  if(s1>s2){ teams[t1].W++; teams[t2].L++; teams[t1].Pts+=3; }
+  else if(s1<s2){ teams[t2].W++; teams[t1].L++; teams[t2].Pts+=3; }
+  else { teams[t1].D++; teams[t2].D++; teams[t1].Pts++; teams[t2].Pts++; }
+
+  teams[t1].GD=teams[t1].GF-teams[t1].GA;
+  teams[t2].GD=teams[t2].GF-teams[t2].GA;
+
+  history.push({t1,s1,t2,s2});
+  lastTeam1=t1; lastTeam2=t2;
+  render();
+}
+
+function undoMatch(){
+  if(history.length===0) return;
+  const last=history.pop(); const {t1,s1,t2,s2}=last;
+  teams[t1].P--; teams[t2].P--;
+  teams[t1].GF-=s1; teams[t1].GA-=s2;
+  teams[t2].GF-=s2; teams[t2].GA-=s1;
+
+  if(s1>s2){ teams[t1].W--; teams[t2].L--; teams[t1].Pts-=3; }
+  else if(s1<s2){ teams[t2].W--; teams[t1].L--; teams[t2].Pts-=3; }
+  else { teams[t1].D--; teams[t2].D--; teams[t1].Pts--; teams[t2].Pts--; }
+
+  teams[t1].GD=teams[t1].GF-teams[t1].GA;
+  teams[t2].GD=teams[t2].GF-teams[t2].GA;
+
+  render();
+}
+
+function addPlayerStats(){
+  const playerName = document.getElementById("playerSelectInput").value;
+  const goals = parseInt(document.getElementById("goals").value) || 0;
+  const assists = parseInt(document.getElementById("assists").value) || 0;
+
+  const player = players[playerName]; // existing local object
+  fetch("http://localhost:8080/add-player", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: playerName,
+      team_id: Object.keys(teams).indexOf(player.team) + 1, // simple mapping
+      goals: player.goals + goals,
+      assists: player.assists + assists
+    })
+  }).then(res => res.json()).then(data => {
+    console.log(data);
+    player.goals += goals;
+    player.assists += assists;
+    render();
+    fireworks("Done ✅");
+  });
+}
+
+
+function fireworks(text=""){
+  for(let i=0;i<25;i++){
+    const p=document.createElement("div"); p.className="particle";
+    const angle=Math.random()*2*Math.PI;
+    const distance=100+Math.random()*50;
+    p.style.setProperty("--x", `${Math.cos(angle)*distance}px`);
+    p.style.setProperty("--y", `${Math.sin(angle)*distance}px`);
+    p.style.left=(window.innerWidth/2)+"px"; p.style.top="120px";
+    document.body.appendChild(p); setTimeout(()=>p.remove(),1300);
+  }
+  if(text){
+    const t=document.createElement("div"); t.className="done-text"; t.textContent=text;
+    document.body.appendChild(t); setTimeout(()=>t.remove(),2000);
+  }
+}
+
+function render(){
+  // Teams dropdown
+  const t1=document.getElementById("team1"); const t2=document.getElementById("team2");
+  t1.innerHTML=""; t2.innerHTML="";
+  for(const t in teams){
+    t1.innerHTML += `<option value="${t}" ${t===lastTeam1?"selected":""}>${t}</option>`;
+    t2.innerHTML += `<option value="${t}" ${t===lastTeam2?"selected":""}>${t}</option>`;
+  }
+
+  // Players dropdown
+  const sel=document.getElementById("playerSelectInput");
+  sel.innerHTML="";
+  for(const p in players){
+    sel.innerHTML+=`<option value="${p}" ${p===lastPlayer?"selected":""}>${p} (${players[p].team})</option>`;
+  }
+
+  // Player table sorted by G+A
+  const sortedPlayers = Object.entries(players).sort(([,a],[,b]) => {
+  const totalA = a.goals + a.assists;
+  const totalB = b.goals + b.assists;
+  if(totalB !== totalA) return totalB - totalA;   // sort by G+A total
+  return b.goals - a.goals;                     // tie-breaker: more goals first
+});
+  let playerRows="";
+  sortedPlayers.forEach(([name,p],index)=>{
+    const total=p.goals+p.assists;
+    let bg="";
+    if(index===0) bg="background-color: gold; font-weight:bold;";
+    else if(index===1) bg="background-color: silver; font-weight:bold;";
+    else if(index===2) bg="background-color: #cd7f32; font-weight:bold;";
+    playerRows+=`<tr style="${bg}"><td>${name}</td><td>${p.team}</td><td>⚽ ${p.goals}</td><td>🎯 ${p.assists}</td><td>${total}</td></tr>`;
+  });
+  document.querySelector("#playerTable tbody").innerHTML=playerRows;
+
+  // Team table
+  let teamRows="";
+ // Sort teams by points descending, then GD descending
+const sortedTeams = Object.entries(teams)
+  .sort(([,a],[,b]) => {
+    if (b.Pts !== a.Pts) return b.Pts - a.Pts;
+    return b.GD - a.GD; // tie-breaker by goal difference
+  });
+
+// let teamRows = "";
+sortedTeams.forEach(([t, x]) => {
+  teamRows += `<tr>
+    <td>${t}</td><td>${x.P}</td><td>${x.W}</td><td>${x.D}</td><td>${x.L}</td>
+    <td>${x.GF}</td><td>${x.GA}</td><td>${x.GD}</td><td>${x.Pts}</td>
+  </tr>`;
+});
+document.querySelector("#teamTable tbody").innerHTML = teamRows;
+
+  document.querySelector("#teamTable tbody").innerHTML=teamRows;
+
+  // Match history
+  let hist="";
+  history.forEach((m,i)=>{ hist+=`<tr><td>Match ${i+1}</td><td>${m.t1} ${m.s1} - ${m.s2} ${m.t2}</td></tr>`; });
+  document.querySelector("#historyTable tbody").innerHTML=hist;
+}
+
+render();
+</script>
+</body>
+</html>

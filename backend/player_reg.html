@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>League Registration</title>
+  <style>
+    body { font-family: Arial; background: #f0f4ff; padding: 20px; }
+    h1 { text-align: center; }
+    .card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    input, select { padding: 5px; margin: 5px; }
+    button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer;}
+    button:hover { background: #1e40af; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px;}
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+    th { background: #f9f9f9; }
+  </style>
+</head>
+<body>
+  <h1>🏟️ League Registration</h1>
+
+  <div class="card">
+    <h2>Add Team</h2>
+    <input type="text" id="teamName" placeholder="Team Name">
+    <button onclick="addTeam()">Add Team</button>
+  </div>
+
+  <div class="card">
+    <h2>Add Player</h2>
+    <input type="text" id="playerName" placeholder="Player Name">
+    <select id="playerTeam"></select>
+    <button onclick="addPlayer()">Add Player</button>
+  </div>
+
+  <div class="card">
+    <h2>Registered Teams & Players</h2>
+    <table id="regTable">
+      <thead><tr><th>Team</th><th>Players</th><th>Action</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div style="text-align:center">
+    <button onclick="saveAndGo()">Save & Go to Tracker</button>
+  </div>
+
+  <script>
+    const teams = {}; // { teamName: [player1, player2...] }
+
+    function addTeam(){
+      const name = document.getElementById("teamName").value.trim();
+      if(!name) return alert("Enter team name!");
+      if(teams[name]) return alert("Team already exists!");
+      teams[name] = [];
+      document.getElementById("teamName").value="";
+      renderDropdowns();
+      renderTable();
+    }
+
+    function addPlayer(){
+      const name = document.getElementById("playerName").value.trim();
+      const team = document.getElementById("playerTeam").value;
+      if(!name) return alert("Enter player name!");
+      if(!team) return alert("Select team!");
+      if(teams[team].includes(name)) return alert("Player already exists in this team!");
+      teams[team].push(name);
+      document.getElementById("playerName").value="";
+      renderTable();
+    }
+
+    function removePlayer(team, player){
+      teams[team] = teams[team].filter(p => p !== player);
+      renderTable();
+    }
+
+    function renderDropdowns(){
+      const select = document.getElementById("playerTeam");
+      select.innerHTML = "";
+      for(const t in teams){
+        select.innerHTML += `<option value="${t}">${t}</option>`;
+      }
+    }
+
+    function renderTable(){
+      const tbody = document.querySelector("#regTable tbody");
+      tbody.innerHTML = "";
+      for(const t in teams){
+        const players = teams[t].map(p=>`${p} <button onclick="removePlayer('${t}','${p}')">Remove</button>`).join("<br>");
+        tbody.innerHTML += `<tr><td>${t}</td><td>${players}</td><td>-</td></tr>`;
+      }
+    }
+
+    function saveAndGo(){
+      if(Object.keys(teams).length===0) return alert("Add at least one team!");
+      // Save to localStorage for tracker page
+      localStorage.setItem("leagueTeams", JSON.stringify(teams));
+      alert("Teams & players saved! Go to tracker page.");
+      window.location.href = "index.html"; // redirect to tracker
+    }
+  </script>
+</body>
+</html>
