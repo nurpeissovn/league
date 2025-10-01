@@ -1,21 +1,22 @@
 CREATE TABLE IF NOT EXISTS teams (
-    id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS players (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    team_id INT REFERENCES teams(id),
-    goals INT DEFAULT 0,
-    assists INT DEFAULT 0
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  team_id INT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  goals INT NOT NULL DEFAULT 0,
+  assists INT NOT NULL DEFAULT 0,
+  UNIQUE (name, team_id)
 );
 
 CREATE TABLE IF NOT EXISTS matches (
-    id SERIAL PRIMARY KEY,
-    team1_id INT REFERENCES teams(id),
-    team2_id INT REFERENCES teams(id),
-    score1 INT,
-    score2 INT,
-    played_at TIMESTAMP DEFAULT NOW()
+  id SERIAL PRIMARY KEY,
+  team1_id INT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  team2_id INT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  score1 INT NOT NULL,
+  score2 INT NOT NULL,
+  played_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

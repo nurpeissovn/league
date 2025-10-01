@@ -15,9 +15,34 @@ table { width: 100%; border-collapse: collapse; margin-top: 10px;}
 th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
 th { background: #f9f9f9; }
 /* Fireworks */
-.particle { position:absolute; width:6px; height:6px; background:orange; border-radius:50%; pointer-events:none; animation: explode 700ms ease-out forwards;}
-@keyframes explode { from {transform: translate(0,0) scale(1); opacity:1;} to {transform: translate(var(--x), var(--y)) scale(0.5); opacity:0;} }
-.done-text { position:absolute; top:150px; left:50%; transform:translateX(-50%); font-size:24px; color:green; font-weight:bold; }
+.particle {
+    position: fixed; /* <--- CHANGE THIS */
+    width: 6px;
+    height: 6px;
+    background: orange;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: explode 700ms ease-out forwards;
+}
+@keyframes explode {
+    from {
+        transform: translate(0, 0) scale(1);
+        opacity: 1;
+    }
+    to {
+        transform: translate(var(--x), var(--y)) scale(0.5);
+        opacity: 0;
+    }
+}
+.done-text {
+    position: fixed; /* <--- CHANGE THIS */
+    top: 150px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 24px;
+    color: green;
+    font-weight: bold;
+}
 .tables-container {
   display: flex;
   gap: 20px;          /* space between the two tables */
@@ -28,6 +53,10 @@ th { background: #f9f9f9; }
   min-width: 300px;    /* avoid shrinking too much */
 }
 
+body {
+  position: relative;  /* ensures absolute-positioned particles are relative to body */
+  overflow-x: hidden;  /* prevent horizontal scrollbar */
+}
 
 
 </style>
@@ -110,7 +139,7 @@ th { background: #f9f9f9; }
 <script>
 // Load teams & players from localStorage
 const stored = JSON.parse(localStorage.getItem("leagueTeams") || "{}");
-
+const teamIds = JSON.parse(localStorage.getItem("leagueTeamIds") || "{}");
 const teams = {};
 const players = {};
 for(const t in stored){
@@ -122,6 +151,67 @@ for(const t in stored){
 
 const history = [];
 let lastTeam1=null, lastTeam2=null, lastPlayer=null;
+(async function hydrateFromDB(){
+  if (!Object.keys(teamIds).length) {
+  const resTeams = await fetch("/api/list-teams");
+  if (resTeams.ok) {
+    const arr = await resTeams.json(); // [{id,name}]
+    Object.assign(teamIds, Object.fromEntries(arr.map(t => [t.name, t.id])));
+    localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
+  }
+}
+
+  try {
+    // 1) Ensure team map exists (you already have teamIds via reg page)
+    // If needed, fetch again:
+    // const resTeams = await fetch("/api/list-teams"); const arrTeams = await resTeams.json();
+
+    // 2) Players → rebuild local players (so table persists)
+    const resP = await fetch("/api/players");
+    if (resP.ok) {
+      const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
+      // build reverse map id->name from teamIds
+      const idToName = Object.fromEntries(Object.entries(teamIds).map(([n,i]) => [i, n]));
+      for (const p of dbPlayers) {
+        const teamName = idToName[p.team_id] || "Unknown";
+        // ensure team exists in local 'teams' object for the table
+        if (!teams[teamName]) teams[teamName] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+        players[p.name] = { team: teamName, goals: p.goals, assists: p.assists };
+      }
+    }
+
+    // 3) Matches → recompute team table + history
+    const resM = await fetch("/api/matches");
+    if (resM.ok) {
+      const dbMatches = await resM.json(); // ordered by played_at ASC
+      const idToName = Object.fromEntries(Object.entries(teamIds).map(([n,i]) => [i, n]));
+      for (const m of dbMatches) {
+        const t1 = idToName[m.team1_id], t2 = idToName[m.team2_id];
+        if (!t1 || !t2) continue;
+        // ensure teams
+        for (const t of [t1,t2]) if (!teams[t]) teams[t] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+        // accumulate standings
+        teams[t1].P++; teams[t2].P++;
+        teams[t1].GF+=m.score1; teams[t1].GA+=m.score2;
+        teams[t2].GF+=m.score2; teams[t2].GA+=m.score1;
+        if (m.score1>m.score2){ teams[t1].W++; teams[t2].L++; teams[t1].Pts+=3; }
+        else if (m.score1<m.score2){ teams[t2].W++; teams[t1].L++; teams[t2].Pts+=3; }
+        else { teams[t1].D++; teams[t2].D++; teams[t1].Pts++; teams[t2].Pts++; }
+        teams[t1].GD=teams[t1].GF-teams[t1].GA;
+        teams[t2].GD=teams[t2].GF-teams[t2].GA;
+        // history
+        history.push({t1, s1:m.score1, t2, s2:m.score2});
+      }
+    }
+
+    render();
+  } catch (e) {
+    console.warn("Hydration failed:", e);
+  }
+})();
+
+
+
 
 function handleSubmit() {
   // first update local tables
@@ -133,15 +223,15 @@ function handleSubmit() {
   const s1 = parseInt(document.getElementById("score1").value) || 0;
   const s2 = parseInt(document.getElementById("score2").value) || 0;
 
-  fetch("http://localhost:8080/add-match", {
+  fetch("/api/add-match", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      team1_id: Object.keys(teams).indexOf(t1) + 1, // simple mapping team name → ID
-      team2_id: Object.keys(teams).indexOf(t2) + 1,
-      score1: s1,
-      score2: s2
-    })
+  team1_id: teamIds[t1],   // <-- use real ID
+  team2_id: teamIds[t2],   // <-- use real ID
+  score1: s1,
+  score2: s2
+})
   })
   .then(res => res.json())
   .then(data => {
@@ -197,40 +287,59 @@ function addPlayerStats(){
   const assists = parseInt(document.getElementById("assists").value) || 0;
 
   const player = players[playerName]; // existing local object
-  fetch("http://localhost:8080/add-player", {
+  fetch("/api/add-player", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      name: playerName,
-      team_id: Object.keys(teams).indexOf(player.team) + 1, // simple mapping
-      goals: player.goals + goals,
-      assists: player.assists + assists
-    })
-  }).then(res => res.json()).then(data => {
+  name: playerName,
+  team_id: teamIds[player.team],  // <-- use real ID
+  goals: player.goals + goals,
+  assists: player.assists + assists
+})
+})
+.then(res => res.json())
+.then(data => {
     console.log(data);
     player.goals += goals;
     player.assists += assists;
     render();
     fireworks("Done ✅");
-  });
+});
+
 }
 
 
 function fireworks(text=""){
+  const centerX = window.innerWidth / 2;
+  const centerY = 150;
+
   for(let i=0;i<25;i++){
-    const p=document.createElement("div"); p.className="particle";
-    const angle=Math.random()*2*Math.PI;
-    const distance=100+Math.random()*50;
-    p.style.setProperty("--x", `${Math.cos(angle)*distance}px`);
-    p.style.setProperty("--y", `${Math.sin(angle)*distance}px`);
-    p.style.left=(window.innerWidth/2)+"px"; p.style.top="120px";
-    document.body.appendChild(p); setTimeout(()=>p.remove(),1300);
+    const p = document.createElement("div");
+    p.className = "particle";
+
+    const angle = Math.random() * 2 * Math.PI;
+    const distance = 100 + Math.random() * 50;
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+
+    p.style.left = `${centerX}px`;
+    p.style.top = `${centerY}px`;
+    p.style.setProperty("--x", `${x}px`);
+    p.style.setProperty("--y", `${y}px`);
+
+    document.body.appendChild(p);
+    setTimeout(()=>p.remove(), 1300);
   }
+
   if(text){
-    const t=document.createElement("div"); t.className="done-text"; t.textContent=text;
-    document.body.appendChild(t); setTimeout(()=>t.remove(),2000);
+    const t = document.createElement("div");
+    t.className = "done-text";
+    t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(()=>t.remove(), 2000);
   }
 }
+
 
 function render(){
   // Teams dropdown
@@ -284,7 +393,7 @@ sortedTeams.forEach(([t, x]) => {
 });
 document.querySelector("#teamTable tbody").innerHTML = teamRows;
 
-  document.querySelector("#teamTable tbody").innerHTML=teamRows;
+  
 
   // Match history
   let hist="";
