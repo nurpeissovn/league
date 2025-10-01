@@ -46,19 +46,19 @@
 
   <script>
     /*
-      This page originally stored teams and players in localStorage, which made
+      This page initially stored teams and players in localStorage, which made
       data device‑specific. To ensure that all devices see the same teams and
       players, we now load everything from the server on page load and write
       any additions directly to the backend. localStorage is only used to
       cache the mapping of team names to their database IDs.
     */
 
-    const teams = {};    // structure: { teamName: [player1, player2, …] }
+    const teams = {};    // { teamName: [player1, player2, …] }
     let teamIds = {};    // mapping from team name to DB ID
 
     // Initialise page state by loading existing teams and players from the API
     async function init() {
-      // attempt to hydrate teamIds from localStorage; if it fails just start fresh
+      // hydrate teamIds from localStorage; ignore errors and start fresh if parsing fails
       try {
         teamIds = JSON.parse(localStorage.getItem("leagueTeamIds") || "{}");
       } catch (e) {
@@ -73,7 +73,7 @@
             teamIds[t.name] = t.id;
             if (!teams[t.name]) teams[t.name] = [];
           });
-          // cache the updated mapping locally for faster lookups
+          // cache the updated mapping locally
           localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
         }
         // 2) Load existing players so they appear in the registration table
@@ -189,7 +189,7 @@
       tbody.innerHTML = "";
       for (const t in teams) {
         const playersList = teams[t]
-          .map(p => `${p} <button onclick="removePlayer('${t}','${p}')">Remove</button>`)
+          .map(p => `${p} <button onclick=\"removePlayer('${t}','${p}')\">Remove</button>`)
           .join("<br>");
         tbody.innerHTML += `<tr><td>${t}</td><td>${playersList}</td><td>-</td></tr>`;
       }
