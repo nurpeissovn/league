@@ -46,17 +46,40 @@
 
   <script>
     const teams = {}; // { teamName: [player1, player2...] }
-
-    function addTeam(){
+    let teamIds = JSON.parse(localStorage.getItem("leagueTeamIds") || "{}"); // {name: id}
+  
+    async function addTeam(){
       const name = document.getElementById("teamName").value.trim();
       if(!name) return alert("Enter team name!");
       if(teams[name]) return alert("Team already exists!");
+  
+      // 1) Create team locally for UI
       teams[name] = [];
-      document.getElementById("teamName").value="";
+      document.getElementById("teamName").value = "";
       renderDropdowns();
       renderTable();
+  
+      // 2) Create team in DB and store its real ID
+      try {
+        const res = await fetch("/api/add-team", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ name })
+        });
+        if (!res.ok) {
+          const msg = await res.text();
+          alert("Failed to add team in DB: " + msg);
+          return;
+        }
+        const data = await res.json();   // { id, name }
+        teamIds[name] = data.id;
+        localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
+      } catch (e) {
+        console.error(e);
+        alert("Network error while adding team");
+      }
     }
-
+  
     function addPlayer(){
       const name = document.getElementById("playerName").value.trim();
       const team = document.getElementById("playerTeam").value;
@@ -67,12 +90,12 @@
       document.getElementById("playerName").value="";
       renderTable();
     }
-
+  
     function removePlayer(team, player){
       teams[team] = teams[team].filter(p => p !== player);
       renderTable();
     }
-
+  
     function renderDropdowns(){
       const select = document.getElementById("playerTeam");
       select.innerHTML = "";
@@ -80,7 +103,7 @@
         select.innerHTML += `<option value="${t}">${t}</option>`;
       }
     }
-
+  
     function renderTable(){
       const tbody = document.querySelector("#regTable tbody");
       tbody.innerHTML = "";
@@ -89,14 +112,35 @@
         tbody.innerHTML += `<tr><td>${t}</td><td>${players}</td><td>-</td></tr>`;
       }
     }
-
-    function saveAndGo(){
+  
+    async function saveAndGo(){
       if(Object.keys(teams).length===0) return alert("Add at least one team!");
-      // Save to localStorage for tracker page
+  
+      // Save both structures for the tracker page
       localStorage.setItem("leagueTeams", JSON.stringify(teams));
-      alert("Teams & players saved! Go to tracker page.");
-      window.location.href = "index.html"; // redirect to tracker
+      localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
+  
+      alert("Saved! Going to tracker…");
+      window.location.href = "index.html";
     }
+  
+    // (Optional) Preload teams from DB into teamIds if user refreshes with empty storage
+    (async function preloadFromDB(){
+      if (Object.keys(teamIds).length) return; // we already have a map
+      try{
+        const res = await fetch("/api/list-teams");
+        if (!res.ok) return;
+        const arr = await res.json(); // [{id,name}]
+        teamIds = Object.fromEntries(arr.map(t => [t.name, t.id]));
+        localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
+        // If you want the dropdown to show these pre-existing teams even before user adds them locally:
+        // for (const t of arr) if (!teams[t.name]) teams[t.name] = [];
+        // renderDropdowns(); renderTable();
+      }catch(e){
+        console.warn("Preload teams failed", e);
+      }
+    })();
   </script>
+  
 </body>
 </html>
