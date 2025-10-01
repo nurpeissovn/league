@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>League Tracker</title>
+<style>
+body { font-family: Arial; background: #f0f4ff; padding: 20px; }
+h1 { text-align: center; }
+.card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+input, select { padding: 5px; margin: 5px; }
+button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer;}
+button:hover { background: #1e40af; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px;}
+th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+th { background: #f9f9f9; }
+/* Fireworks */
+.particle {
+    position: fixed;
+    width: 6px;
+    height: 6px;
+    background: orange;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: explode 700ms ease-out forwards;
+}
+@keyframes explode {
+    from {
+        transform: translate(0, 0) scale(1);
+        opacity: 1;
+    }
+    to {
+        transform: translate(var(--x), var(--y)) scale(0.5);
+        opacity: 0;
+    }
+}
+.done-text {
+    position: fixed;
+    top: 150px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 24px;
+    color: green;
+    font-weight: bold;
+}
+.tables-container {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.tables-container .card {
+  flex: 1;
+  min-width: 300px;
+}
+body {
+  position: relative;
+  overflow-x: hidden;
+}
+
+</style>
+</head>
+<body>
+<h1>⚽ League Tracker</h1>
+
+<!-- Match Input -->
+<div class="card">
+    <h2>Enter Match Result</h2>
+    <div class="flex-row">
+      <div class="input-group">
+        <label>Team 1:</label>
+        <select id="team1"></select>
+        <input id="score1" type="number" value="0" min="0">
+      </div>
+      <div class="input-group">
+        <label>Team 2:</label>
+        <select id="team2"></select>
+        <input id="score2" type="number" value="0" min="0">
+      </div>
+      <button onclick="handleSubmit()">Submit Match</button>
+      <button onclick="undoMatch()">Undo Last Match</button>
+    </div>
+  </div>
+  
+  <!-- Player Stats Input -->
+  <div class="card">
+    <h2>Add Player Statistics</h2>
+    <div class="flex-row">
+      <div class="input-group">
+        <label>Player:</label>
+        <select id="playerSelectInput"></select>
+      </div>
+      <div class="input-group">
+        <label>Goals ⚽:</label>
+        <input id="goals" type="number" value="0" min="0">
+      </div>
+      <div class="input-group">
+        <label>Assists 🎯:</label>
+        <input id="assists" type="number" value="0" min="0">
+      </div>
+      <button onclick="addPlayerStats()">Add Stats</button>
+    </div>
+  </div>
+  
+  
+
+  <div class="tables-container">
+    <div class="card" style="flex:1">
+      <h2>👤 Player Statistics</h2>
+      <table id="playerTable">
+        <thead>
+          <tr><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Total (G+A)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  
+    <div class="card" style="flex:1">
+      <h2>🏟️ Team Statistics</h2>
+      <table id="teamTable">
+        <thead>
+          <tr><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  
+
+<div class="card">
+<h2>📜 Match History</h2>
+<table id="historyTable">
+<thead><tr><th>Match</th><th>Score</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+
+<script>
+/*
+  The tracker originally relied on localStorage for team and player lists, which
+  made the data device‑specific. This version fetches teams, players and
+  matches from the server on startup, ensuring that all devices see the same
+  league state. localStorage is only used as a cache for the team ID
+  mapping. Undoing a match or removing a player will only affect the local
+  view because no delete API endpoint is defined.
+*/
+
+const teams = {};      // { teamName: {P,W,D,L,GF,GA,GD,Pts} }
+const players = {};    // { playerName: {team, goals, assists} }
+let teamIds = {};      // { teamName: id }
+const history = [];    // list of played matches for display
+let lastTeam1 = null;
+let lastTeam2 = null;
+let lastPlayer = null;
+
+// Initialise the tracker by pulling data from the backend
+async function init() {
+  // hydrate teamIds from localStorage, but we'll update it from the server next
+  try {
+    teamIds = JSON.parse(localStorage.getItem("leagueTeamIds") || "{}");
+  } catch (e) {
+    teamIds = {};
+  }
+  try {
+    // 1) Fetch all teams and build the base standings object
+    const resTeams = await fetch("/api/list-teams");
+    if (resTeams.ok) {
+      const arr = await resTeams.json();
+      arr.forEach(t => {
+        teamIds[t.name] = t.id;
+        teams[t.name] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+      });
+      localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
+    }
+    // 2) Fetch all players and populate the players list
+    const resP = await fetch("/api/players");
+    if (resP.ok) {
+      const arrP = await resP.json();
+      // build reverse ID→name map
+      const idToName = {};
+      for (const name in teamIds) {
+        idToName[teamIds[name]] = name;
+      }
+      arrP.forEach(p => {
+        const teamName = idToName[p.team_id] || "Unknown";
+        players[p.name] = { team: teamName, goals: p.goals, assists: p.assists };
+        // ensure a default entry exists in teams for this player's team
+        if (!teams[teamName]) {
+          teams[teamName] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+        }
+      });
+    }
+    // 3) Fetch all matches and accumulate standings
+    const resM = await fetch("/api/matches");
+    if (resM.ok) {
+      const dbMatches = await resM.json();
+      const idToName = {};
+      for (const name in teamIds) {
+        idToName[teamIds[name]] = name;
+      }
+      dbMatches.forEach(m => {
+        const t1 = idToName[m.team1_id];
+        const t2 = idToName[m.team2_id];
+        if (!t1 || !t2) return;
+        // ensure team objects exist
+        if (!teams[t1]) {
+          teams[t1] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+        }
+        if (!teams[t2]) {
+          teams[t2] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+        }
+        // update stats
+        teams[t1].P++; teams[t2].P++;
+        teams[t1].GF += m.score1; teams[t1].GA += m.score2;
+        teams[t2].GF += m.score2; teams[t2].GA += m.score1;
+        if (m.score1 > m.score2) {
+          teams[t1].W++; teams[t2].L++; teams[t1].Pts += 3;
+        } else if (m.score1 < m.score2) {
+          teams[t2].W++; teams[t1].L++; teams[t2].Pts += 3;
+        } else {
+          teams[t1].D++; teams[t2].D++; teams[t1].Pts++; teams[t2].Pts++;
+        }
+        teams[t1].GD = teams[t1].GF - teams[t1].GA;
+        teams[t2].GD = teams[t2].GF - teams[t2].GA;
+        // store for history display
+        history.push({ t1, s1: m.score1, t2, s2: m.score2 });
+      });
+    }
+    render();
+  } catch (e) {
+    console.warn("Initialization failed:", e);
+  }
+}
+
+init();
+
+// Submit a match: update local stats then send to the backend
+function handleSubmit() {
+  submitMatch();
+  const t1 = document.getElementById("team1").value;
+  const t2 = document.getElementById("team2").value;
+  const s1 = parseInt(document.getElementById("score1").value) || 0;
+  const s2 = parseInt(document.getElementById("score2").value) || 0;
+  fetch("/api/add-match", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      team1_id: teamIds[t1],
+      team2_id: teamIds[t2],
+      score1: s1,
+      score2: s2
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    console.log("Match saved:", data);
+    fireworks("Done ✅");
+  })
+  .catch(err => console.error("Error saving match:", err));
+}
+
+// Update the standings and history locally when a match is submitted
+function submitMatch(){
+  const t1 = document.getElementById("team1").value;
+  const t2 = document.getElementById("team2").value;
+  const s1 = parseInt(document.getElementById("score1").value) || 0;
+  const s2 = parseInt(document.getElementById("score2").value) || 0;
+  if (t1 === t2) {
+    alert("Team cannot play itself!");
+    return;
+  }
+  if (!teams[t1]) teams[t1] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+  if (!teams[t2]) teams[t2] = {P:0,W:0,D:0,L:0,GF:0,GA:0,GD:0,Pts:0};
+  teams[t1].P++; teams[t2].P++;
+  teams[t1].GF += s1; teams[t1].GA += s2;
+  teams[t2].GF += s2; teams[t2].GA += s1;
+  if (s1 > s2) {
+    teams[t1].W++; teams[t2].L++; teams[t1].Pts += 3;
+  } else if (s1 < s2) {
+    teams[t2].W++; teams[t1].L++; teams[t2].Pts += 3;
+  } else {
+    teams[t1].D++; teams[t2].D++; teams[t1].Pts++; teams[t2].Pts++;
+  }
+  teams[t1].GD = teams[t1].GF - teams[t1].GA;
+  teams[t2].GD = teams[t2].GF - teams[t2].GA;
+  history.push({ t1, s1, t2, s2 });
+  lastTeam1 = t1;
+  lastTeam2 = t2;
+  render();
+}
+
+// Undo the most recently submitted match locally. This does not affect
+// previously saved matches on the server because there is no delete endpoint.
+function undoMatch(){
+  if (history.length === 0) return;
+  const last = history.pop();
+  const {t1, s1, t2, s2} = last;
+  teams[t1].P--; teams[t2].P--;
+  teams[t1].GF -= s1; teams[t1].GA -= s2;
+  teams[t2].GF -= s2; teams[t2].GA -= s1;
+  if (s1 > s2) {
+    teams[t1].W--; teams[t2].L--; teams[t1].Pts -= 3;
+  } else if (s1 < s2) {
+    teams[t2].W--; teams[t1].L--; teams[t2].Pts -= 3;
+  } else {
+    teams[t1].D--; teams[t2].D--; teams[t1].Pts--; teams[t2].Pts--;
+  }
+  teams[t1].GD = teams[t1].GF - teams[t1].GA;
+  teams[t2].GD = teams[t2].GF - teams[t2].GA;
+  render();
+}
+
+// Add goals and assists for a player and persist to the backend
+function addPlayerStats(){
+  const playerName = document.getElementById("playerSelectInput").value;
+  const goals = parseInt(document.getElementById("goals").value) || 0;
+  const assists = parseInt(document.getElementById("assists").value) || 0;
+  const player = players[playerName];
+  fetch("/api/add-player", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: playerName,
+      team_id: teamIds[player.team],
+      goals: player.goals + goals,
+      assists: player.assists + assists
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    console.log(data);
+    player.goals += goals;
+    player.assists += assists;
+    lastPlayer = playerName;
+    render();
+    fireworks("Done ✅");
+  });
+}
+
+// Show a simple fireworks animation with a message after completing an action
+function fireworks(text = "") {
+  const centerX = window.innerWidth / 2;
+  const centerY = 150;
+  for(let i=0;i<25;i++){
+    const p = document.createElement("div");
+    p.className = "particle";
+    const angle = Math.random() * 2 * Math.PI;
+    const distance = 100 + Math.random() * 50;
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+    p.style.left = `${centerX}px`;
+    p.style.top = `${centerY}px`;
+    p.style.setProperty("--x", `${x}px`);
+    p.style.setProperty("--y", `${y}px`);
+    document.body.appendChild(p);
+    setTimeout(()=>p.remove(), 1300);
+  }
+  if (text) {
+    const t = document.createElement("div");
+    t.className = "done-text";
+    t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(()=>t.remove(), 2000);
+  }
+}
+
+// Render all dynamic parts of the UI: dropdowns, tables and history
+function render(){
+  // Team selectors
+  const t1 = document.getElementById("team1");
+  const t2 = document.getElementById("team2");
+  t1.innerHTML = "";
+  t2.innerHTML = "";
+  for (const t in teams) {
+    t1.innerHTML += `<option value="${t}" ${t === lastTeam1 ? "selected" : ""}>${t}</option>`;
+    t2.innerHTML += `<option value="${t}" ${t === lastTeam2 ? "selected" : ""}>${t}</option>`;
+  }
+  // Player selector
+  const sel = document.getElementById("playerSelectInput");
+  sel.innerHTML = "";
+  for (const p in players) {
+    sel.innerHTML += `<option value="${p}" ${p === lastPlayer ? "selected" : ""}>${p} (${players[p].team})</option>`;
+  }
+  // Player table sorted by total (G+A), then goals, then name
+  const sortedPlayers = Object.entries(players).sort(([nameA,a],[nameB,b]) => {
+    const totalA = a.goals + a.assists;
+    const totalB = b.goals + b.assists;
+    if (totalB !== totalA) return totalB - totalA;
+    if (b.goals !== a.goals) return b.goals - a.goals;
+    return nameA.localeCompare(nameB);
+  });
+  let playerRows = "";
+  sortedPlayers.forEach(([name,p],index) => {
+    const total = p.goals + p.assists;
+    let bg = "";
+    if (index === 0) bg = "background-color: gold; font-weight:bold;";
+    else if (index === 1) bg = "background-color: silver; font-weight:bold;";
+    else if (index === 2) bg = "background-color: #cd7f32; font-weight:bold;";
+    playerRows += `<tr style="${bg}"><td>${name}</td><td>${p.team}</td><td>⚽ ${p.goals}</td><td>🎯 ${p.assists}</td><td>${total}</td></tr>`;
+  });
+  document.querySelector("#playerTable tbody").innerHTML = playerRows;
+  // Team table sorted by points, then GD, then name
+  const sortedTeams = Object.entries(teams).sort(([nameA,a],[nameB,b]) => {
+    if (b.Pts !== a.Pts) return b.Pts - a.Pts;
+    if (b.GD !== a.GD) return b.GD - a.GD;
+    return nameA.localeCompare(nameB);
+  });
+  let teamRows = "";
+  sortedTeams.forEach(([t,x]) => {
+    teamRows += `<tr>
+      <td>${t}</td><td>${x.P}</td><td>${x.W}</td><td>${x.D}</td><td>${x.L}</td>
+      <td>${x.GF}</td><td>${x.GA}</td><td>${x.GD}</td><td>${x.Pts}</td>
+    </tr>`;
+  });
+  document.querySelector("#teamTable tbody").innerHTML = teamRows;
+  // Match history table
+  let hist = "";
+  history.forEach((m,i) => {
+    hist += `<tr><td>Match ${i+1}</td><td>${m.t1} ${m.s1} - ${m.s2} ${m.t2}</td></tr>`;
+  });
+  document.querySelector("#historyTable tbody").innerHTML = hist;
+}
+</script>
+</body>
+</html>
