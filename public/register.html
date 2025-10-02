@@ -41,89 +41,60 @@
   </div>
 
   <div style="text-align:center">
-    <button onclick="saveAndGo()">Save & Go to Tracker</button>
+    <button onclick="goToTracker()">Go to Tracker</button>
   </div>
 
   <script>
-    /*
-      This page initially stored teams and players in localStorage, which made
-      data device‑specific. To ensure that all devices see the same teams and
-      players, we now load everything from the server on page load and write
-      any additions directly to the backend. localStorage is only used to
-      cache the mapping of team names to their database IDs.
-    */
-
-    const teams = {};    // { teamName: [player1, player2, …] }
-    let teamIds = {};    // mapping from team name to DB ID
-
-    // Initialise page state by loading existing teams and players from the API
-    async function init() {
-      // hydrate teamIds from localStorage; ignore errors and start fresh if parsing fails
+    const teams = {}; // { teamName: { id: number, players: [names] } }
+  
+    async function loadTeamsFromDB() {
       try {
-        teamIds = JSON.parse(localStorage.getItem("leagueTeamIds") || "{}");
-      } catch (e) {
-        teamIds = {};
-      }
-      try {
-        // 1) Load the list of teams from the backend
-        const resTeams = await fetch("/api/list-teams");
-        if (resTeams.ok) {
-          const arr = await resTeams.json(); // [{id,name}]
-          arr.forEach(t => {
-            teamIds[t.name] = t.id;
-            if (!teams[t.name]) teams[t.name] = [];
-          });
-          // cache the updated mapping locally
-          localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
+        const res = await fetch("/api/list-teams");
+        if (!res.ok) return;
+        const dbTeams = await res.json(); // [{id, name}]
+        
+        for (const t of dbTeams) {
+          teams[t.name] = { id: t.id, players: [] };
         }
-        // 2) Load existing players so they appear in the registration table
-        const resPlayers = await fetch("/api/players");
-        if (resPlayers.ok) {
-          const playersArr = await resPlayers.json(); // [{name, team_id, goals, assists}]
-          // build a reverse lookup from ID to team name
-          const idToName = {};
-          for (const name in teamIds) {
-            idToName[teamIds[name]] = name;
-          }
-          playersArr.forEach(p => {
-            const teamName = idToName[p.team_id];
-            if (!teamName) return;
-            if (!teams[teamName]) teams[teamName] = [];
-            if (!teams[teamName].includes(p.name)) {
-              teams[teamName].push(p.name);
+        
+        // Load players
+        const resP = await fetch("/api/players");
+        if (resP.ok) {
+          const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
+          for (const p of dbPlayers) {
+            const teamEntry = Object.values(teams).find(t => t.id === p.team_id);
+            if (teamEntry) {
+              const teamName = Object.keys(teams).find(k => teams[k].id === p.team_id);
+              teamEntry.players.push(p.name);
             }
-          });
+          }
         }
+        
         renderDropdowns();
         renderTable();
       } catch (e) {
-        console.error("Initialization failed:", e);
+        console.error("Failed to load teams:", e);
       }
     }
-
-    init();
-
-    // Add a new team. The team is first created in the database and then
-    // added locally if the request succeeds.
+  
     async function addTeam() {
       const name = document.getElementById("teamName").value.trim();
       if (!name) return alert("Enter team name!");
       if (teams[name]) return alert("Team already exists!");
+  
       try {
         const res = await fetch("/api/add-team", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ name })
         });
         if (!res.ok) {
           const msg = await res.text();
-          alert("Failed to add team in DB: " + msg);
+          alert("Failed to add team: " + msg);
           return;
         }
-        const data = await res.json();
-        teamIds[name] = data.id;
-        localStorage.setItem("leagueTeamIds", JSON.stringify(teamIds));
-        teams[name] = [];
+        const data = await res.json(); // { id, name }
+        teams[name] = { id: data.id, players: [] };
         document.getElementById("teamName").value = "";
         renderDropdowns();
         renderTable();
@@ -132,33 +103,35 @@
         alert("Network error while adding team");
       }
     }
-
-    // Add a new player. The player is persisted to the DB with zero stats so
-    // that they appear in the tracker across all devices.
+  
     async function addPlayer() {
       const name = document.getElementById("playerName").value.trim();
-      const team = document.getElementById("playerTeam").value;
+      const teamName = document.getElementById("playerTeam").value;
       if (!name) return alert("Enter player name!");
-      if (!team) return alert("Select team!");
-      if (teams[team].includes(name)) return alert("Player already exists in this team!");
+      if (!teamName) return alert("Select team!");
+      
+      const team = teams[teamName];
+      if (team.players.includes(name)) return alert("Player already exists in this team!");
+      
       try {
         const res = await fetch("/api/add-player", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
-            name,
-            team_id: teamIds[team],
+            name: name,
+            team_id: team.id,
             goals: 0,
             assists: 0
           })
         });
+        
         if (!res.ok) {
           const msg = await res.text();
-          alert("Failed to add player in DB: " + msg);
+          alert("Failed to add player: " + msg);
           return;
         }
-        await res.json();
-        teams[team].push(name);
+        
+        team.players.push(name);
         document.getElementById("playerName").value = "";
         renderTable();
       } catch (e) {
@@ -166,15 +139,33 @@
         alert("Network error while adding player");
       }
     }
-
-    // Remove a player only locally. Without a delete endpoint the player
-    // will still exist in the backend and appear when the page is refreshed.
-    function removePlayer(team, player) {
-      teams[team] = teams[team].filter(p => p !== player);
-      renderTable();
+  
+    async function removePlayer(teamName, playerName) {
+      if (!confirm(`Remove ${playerName} from ${teamName}?`)) return;
+      
+      try {
+        const res = await fetch("/api/delete-player", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({
+            name: playerName,
+            team_id: teams[teamName].id
+          })
+        });
+        
+        if (!res.ok) {
+          alert("Failed to remove player");
+          return;
+        }
+        
+        teams[teamName].players = teams[teamName].players.filter(p => p !== playerName);
+        renderTable();
+      } catch (e) {
+        console.error(e);
+        alert("Network error while removing player");
+      }
     }
-
-    // Populate the team dropdown for selecting the player's team
+  
     function renderDropdowns() {
       const select = document.getElementById("playerTeam");
       select.innerHTML = "";
@@ -182,25 +173,25 @@
         select.innerHTML += `<option value="${t}">${t}</option>`;
       }
     }
-
-    // Render the registration table showing each team and its players
+  
     function renderTable() {
       const tbody = document.querySelector("#regTable tbody");
       tbody.innerHTML = "";
       for (const t in teams) {
-        const playersList = teams[t]
-          .map(p => `${p} <button onclick=\"removePlayer('${t}','${p}')\">Remove</button>`)
-          .join("<br>");
-        tbody.innerHTML += `<tr><td>${t}</td><td>${playersList}</td><td>-</td></tr>`;
+        const players = teams[t].players.map(p => 
+          `${p} <button onclick="removePlayer('${t}','${p}')">Remove</button>`
+        ).join("<br>");
+        tbody.innerHTML += `<tr><td>${t}</td><td>${players || "No players"}</td><td>-</td></tr>`;
       }
     }
-
-    // Data is already persisted to the DB so saving simply navigates to the tracker
-    function saveAndGo() {
-      alert("Saved! Going to tracker…");
+  
+    function goToTracker() {
       window.location.href = "index.html";
     }
+  
+    // Load teams on page load
+    loadTeamsFromDB();
   </script>
-
+  
 </body>
 </html>
