@@ -29,6 +29,11 @@ type AddPlayerReq struct {
 	Assists int    `json:"assists"`
 }
 
+type DeletePlayerReq struct {
+	Name   string `json:"name"`
+	TeamID int    `json:"team_id"`
+}
+
 func main() {
 	port := getenv("PORT", "3000")
 	dbURL := os.Getenv("DATABASE_URL")
@@ -62,16 +67,18 @@ func main() {
 	// API
 	mux.Handle("/api/add-match", withJSON(db, addMatchHandler))
 	mux.Handle("/api/add-player", withJSON(db, addPlayerHandler))
-	// Team routes
-	mux.Handle("/api/add-team", withJSON(db, addTeamHandler)) // POST
+	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
 
-	mux.HandleFunc("/api/list-teams", func(w http.ResponseWriter, r *http.Request) { // GET
+	// Team routes
+	mux.Handle("/api/add-team", withJSON(db, addTeamHandler))
+	mux.HandleFunc("/api/list-teams", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		listTeamsHandler(db, w, r)
 	})
+
 	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -79,6 +86,7 @@ func main() {
 		}
 		listPlayersHandler(db, w, r)
 	})
+
 	mux.HandleFunc("/api/matches", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -117,7 +125,7 @@ func pingWithRetry(db *sql.DB, tries int, delay time.Duration) error {
 	return err
 }
 
-// ---- NEW: team endpoints ----
+// ---- Team endpoints ----
 
 type AddTeamReq struct {
 	Name string `json:"name"`
@@ -127,7 +135,6 @@ type TeamDTO struct {
 	Name string `json:"name"`
 }
 
-// POST /api/add-team  { "name": "Barcelona" }  -> { "id": 3, "name": "Barcelona" }
 func addTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	if db == nil {
 		http.Error(w, "DB not configured", 500)
@@ -138,7 +145,6 @@ func addTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json or empty name", 400)
 		return
 	}
-	// upsert by unique name
 	row := db.QueryRow(`
 		INSERT INTO teams (name) VALUES ($1)
 		ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
@@ -153,7 +159,6 @@ func addTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(t)
 }
 
-// GET /api/list-teams -> [ {id,name}, ... ]
 func listTeamsHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	if db == nil {
 		http.Error(w, "DB not configured", 500)
@@ -181,7 +186,6 @@ func listTeamsHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 func runInitSQL(db *sql.DB, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		// если файла нет — просто пропускаем
 		if os.IsNotExist(err) {
 			log.Printf("init.sql not found, skip")
 			return nil
@@ -203,7 +207,7 @@ func listPlayersHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
-	rows, err := db.Query(`SELECT name, team_id, goals, assists FROM players ORDER BY goals DESC, assists DESC`)
+	rows, err := db.Query(`SELECT name, team_id, goals, assists FROM players ORDER BY (goals + assists) DESC, goals DESC`)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -264,7 +268,6 @@ func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 func withJSON(db *sql.DB, h func(db *sql.DB, w http.ResponseWriter, r *http.Request)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// CORS для простоты (если будете выносить фронт отдельно)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
@@ -326,11 +329,6 @@ func addPlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// ensure team exists? (если команды создаёте через UI и грузите в localStorage — можете завести их и в БД тоже)
-	// здесь пример: если нужно, создадим команду-на-заглушку по id нельзя, поэтому пропускаем.
-	// Обычно вы бы имели endpoint /api/sync-teams, который создаёт команды с именами и возвращает их ID.
-
-	// upsert игрока (по name+team_id)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO players (name, team_id, goals, assists)
 		VALUES ($1,$2,$3,$4)
@@ -344,6 +342,33 @@ func addPlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	if err := tx.Commit(); err != nil {
 		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", 500)
+		return
+	}
+	var req DeletePlayerReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", 400)
+		return
+	}
+	if req.TeamID == 0 || strings.TrimSpace(req.Name) == "" {
+		http.Error(w, "invalid player", 400)
+		return
+	}
+
+	_, err := db.ExecContext(r.Context(),
+		`DELETE FROM players WHERE name = $1 AND team_id = $2`,
+		req.Name, req.TeamID)
+	if err != nil {
+		http.Error(w, "db error: "+err.Error(), 500)
 		return
 	}
 
