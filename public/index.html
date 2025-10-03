@@ -126,18 +126,33 @@ async function loadAllData() {
   try {
     // 1) Load teams
     const resTeams = await fetch("/api/list-teams");
-    if (resTeams.ok) {
-      const dbTeams = await resTeams.json(); // [{id, name}]
-      for (const t of dbTeams) {
-        teams[t.name] = { id: t.id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
-        teamIdToName[t.id] = t.name;
-      }
+    if (!resTeams.ok) {
+      console.error("Failed to load teams:", resTeams.status, resTeams.statusText);
+      const errorText = await resTeams.text();
+      console.error("Error details:", errorText);
+      throw new Error(`Failed to load teams: ${resTeams.status} - ${errorText}`);
+    }
+    const dbTeams = await resTeams.json(); // [{id, name}]
+    console.log("Loaded teams:", dbTeams);
+    
+    if (!Array.isArray(dbTeams)) {
+      console.error("Teams response is not an array:", dbTeams);
+      throw new Error("Invalid teams response format");
+    }
+    
+    for (const t of dbTeams) {
+      teams[t.name] = { id: t.id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
+      teamIdToName[t.id] = t.name;
     }
 
     // 2) Load players
     const resP = await fetch("/api/players");
-    if (resP.ok) {
+    if (!resP.ok) {
+      console.error("Failed to load players:", resP.status, resP.statusText);
+      // Don't alert here, players might not exist yet
+    } else {
       const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
+      console.log("Loaded players:", dbPlayers);
       for (const p of dbPlayers) {
         const teamName = teamIdToName[p.team_id] || "Unknown";
         if (!teams[teamName]) {
@@ -154,8 +169,12 @@ async function loadAllData() {
 
     // 3) Load matches and recompute standings
     const resM = await fetch("/api/matches");
-    if (resM.ok) {
+    if (!resM.ok) {
+      console.error("Failed to load matches:", resM.status, resM.statusText);
+      // Don't alert here, matches might not exist yet
+    } else {
       const dbMatches = await resM.json(); // [{team1_id, team2_id, score1, score2, played_at}]
+      console.log("Loaded matches:", dbMatches);
       for (const m of dbMatches) {
         const t1 = teamIdToName[m.team1_id];
         const t2 = teamIdToName[m.team2_id];
@@ -187,10 +206,11 @@ async function loadAllData() {
       }
     }
 
+    console.log("Data loaded successfully");
     render();
   } catch (e) {
     console.error("Failed to load data:", e);
-    alert("Failed to load data from database. Please check your connection.");
+    alert("Failed to load data from database. Error: " + e.message + "\n\nPlease check:\n1. Is your server running?\n2. Is DATABASE_URL set correctly?\n3. Check browser console for details");
   }
 }
 

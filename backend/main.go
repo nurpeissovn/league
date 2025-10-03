@@ -170,7 +170,7 @@ func listTeamsHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	var out []TeamDTO
+	out := []TeamDTO{} // Initialize empty slice instead of nil
 	for rows.Next() {
 		var t TeamDTO
 		if err := rows.Scan(&t.ID, &t.Name); err != nil {
@@ -219,7 +219,7 @@ func listPlayersHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		Goals   int    `json:"goals"`
 		Assists int    `json:"assists"`
 	}
-	var out []P
+	out := []P{} // Initialize empty slice instead of nil
 	for rows.Next() {
 		var p P
 		if err := rows.Scan(&p.Name, &p.TeamID, &p.Goals, &p.Assists); err != nil {
@@ -251,7 +251,7 @@ func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		Score2   int       `json:"score2"`
 		PlayedAt time.Time `json:"played_at"`
 	}
-	var out []M
+	out := []M{} // Initialize empty slice instead of nil
 	for rows.Next() {
 		var m M
 		if err := rows.Scan(&m.Team1ID, &m.Team2ID, &m.Score1, &m.Score2, &m.PlayedAt); err != nil {
