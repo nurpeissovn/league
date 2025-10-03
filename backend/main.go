@@ -22,6 +22,10 @@ type AddMatchReq struct {
 	Score2  int `json:"score2"`
 }
 
+type DeleteMatchReq struct {
+	ID int `json:"id"`
+}
+
 type AddPlayerReq struct {
 	Name    string `json:"name"`
 	TeamID  int    `json:"team_id"`
@@ -66,6 +70,7 @@ func main() {
 	mux := http.NewServeMux()
 	// API
 	mux.Handle("/api/add-match", withJSON(db, addMatchHandler))
+	mux.Handle("/api/delete-match", withJSON(db, deleteMatchHandler))
 	mux.Handle("/api/add-player", withJSON(db, addPlayerHandler))
 	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
 
@@ -232,19 +237,20 @@ func listPlayersHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// GET /api/matches -> [{team1_id,team2_id,score1,score2,played_at}]
+// GET /api/matches -> [{id,team1_id,team2_id,score1,score2,played_at}]
 func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	if db == nil {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
-	rows, err := db.Query(`SELECT team1_id, team2_id, score1, score2, played_at FROM matches ORDER BY played_at ASC`)
+	rows, err := db.Query(`SELECT id, team1_id, team2_id, score1, score2, played_at FROM matches ORDER BY played_at ASC`)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	defer rows.Close()
 	type M struct {
+		ID       int       `json:"id"`
 		Team1ID  int       `json:"team1_id"`
 		Team2ID  int       `json:"team2_id"`
 		Score1   int       `json:"score1"`
@@ -254,7 +260,7 @@ func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	out := []M{} // Initialize empty slice instead of nil
 	for rows.Next() {
 		var m M
-		if err := rows.Scan(&m.Team1ID, &m.Team2ID, &m.Score1, &m.Score2, &m.PlayedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Team1ID, &m.Team2ID, &m.Score1, &m.Score2, &m.PlayedAt); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
@@ -296,9 +302,34 @@ func addMatchHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid teams", 400)
 		return
 	}
+	var matchID int
+	err := db.QueryRowContext(r.Context(),
+		`INSERT INTO matches (team1_id, team2_id, score1, score2) VALUES ($1,$2,$3,$4) RETURNING id`,
+		req.Team1ID, req.Team2ID, req.Score1, req.Score2).Scan(&matchID)
+	if err != nil {
+		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"id": matchID})
+}
+
+func deleteMatchHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", 500)
+		return
+	}
+	var req DeleteMatchReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", 400)
+		return
+	}
+	if req.ID == 0 {
+		http.Error(w, "invalid match id", 400)
+		return
+	}
 	_, err := db.ExecContext(r.Context(),
-		`INSERT INTO matches (team1_id, team2_id, score1, score2) VALUES ($1,$2,$3,$4)`,
-		req.Team1ID, req.Team2ID, req.Score1, req.Score2)
+		`DELETE FROM matches WHERE id = $1`, req.ID)
 	if err != nil {
 		http.Error(w, "db error: "+err.Error(), 500)
 		return
