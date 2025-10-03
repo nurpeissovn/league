@@ -64,6 +64,7 @@ th { background: #f9f9f9; }
         <input id="score2" type="number" value="0" min="0">
       </div>
       <button onclick="handleSubmit()">Submit Match</button>
+      <button onclick="undoMatch()" style="background: #dc2626;">Undo Last Match</button>
     </div>
   </div>
   
@@ -119,8 +120,11 @@ th { background: #f9f9f9; }
 <script>
 const teams = {}; // { teamName: { id, P, W, D, L, GF, GA, GD, Pts } }
 const players = {}; // { playerName: { team, teamId, goals, assists } }
-const history = []; // [{ t1, s1, t2, s2 }]
+const history = []; // [{ t1, s1, t2, s2, matchId }]
 let teamIdToName = {}; // { id: name }
+let lastTeam1 = null;
+let lastTeam2 = null;
+let lastPlayer = null;
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -141,6 +145,10 @@ async function fetchWithRetry(url, retries = 3, delay = 1000) {
 }
 
 async function loadAllData() {
+  const statusEl = document.getElementById("loadingStatus");
+  statusEl.textContent = "Loading...";
+  statusEl.style.color = "#666";
+  
   try {
     // 1) Load teams with retry
     const resTeams = await fetchWithRetry("/api/list-teams");
@@ -154,6 +162,8 @@ async function loadAllData() {
     
     if (dbTeams.length === 0) {
       console.log("No teams in database yet. Please add teams in registration page.");
+      statusEl.textContent = "No teams yet. Go to registration page to add teams.";
+      statusEl.style.color = "#f59e0b";
       render(); // Render empty tables
       return;
     }
@@ -216,16 +226,20 @@ async function loadAllData() {
         teams[t2].GD = teams[t2].GF - teams[t2].GA;
         
         // Add to history
-        history.push({ t1, s1: m.score1, t2, s2: m.score2 });
+        history.push({ t1, s1: m.score1, t2, s2: m.score2, matchId: m.id });
       }
     } catch (e) {
       console.warn("No matches loaded yet:", e);
     }
 
     console.log("Data loaded successfully");
+    statusEl.textContent = "✅ Data loaded successfully!";
+    statusEl.style.color = "#16a34a";
     render();
   } catch (e) {
     console.error("Failed to load data:", e);
+    statusEl.textContent = "❌ Failed to load data. Click refresh to retry.";
+    statusEl.style.color = "#dc2626";
     alert("Failed to load data from database. Error: " + e.message + "\n\nPlease check:\n1. Is your server running?\n2. Is DATABASE_URL set correctly?\n3. Try refreshing the page\n4. Check browser console for details");
   }
 }
@@ -258,6 +272,9 @@ async function handleSubmit() {
       return;
     }
 
+    const data = await res.json();
+    const matchId = data.id; // Get the match ID from response
+
     // Update local state
     teams[t1].P++; teams[t2].P++;
     teams[t1].GF += s1; teams[t1].GA += s2;
@@ -274,7 +291,12 @@ async function handleSubmit() {
     teams[t1].GD = teams[t1].GF - teams[t1].GA;
     teams[t2].GD = teams[t2].GF - teams[t2].GA;
 
-    history.push({ t1, s1, t2, s2 });
+    history.push({ t1, s1, t2, s2, matchId });
+    
+    // Remember selected teams
+    lastTeam1 = t1;
+    lastTeam2 = t2;
+    
     render();
     fireworks("Done ✅");
   } catch (e) {
@@ -316,6 +338,9 @@ async function addPlayerStats() {
 
     player.goals = newGoals;
     player.assists = newAssists;
+    
+    // Remember selected player
+    lastPlayer = playerName;
     
     document.getElementById("goals").value = "0";
     document.getElementById("assists").value = "0";
@@ -360,21 +385,21 @@ function fireworks(text = "") {
 }
 
 function render() {
-  // Teams dropdown
+  // Teams dropdown - remember last selections
   const t1 = document.getElementById("team1");
   const t2 = document.getElementById("team2");
   t1.innerHTML = "";
   t2.innerHTML = "";
   for (const t in teams) {
-    t1.innerHTML += `<option value="${t}">${t}</option>`;
-    t2.innerHTML += `<option value="${t}">${t}</option>`;
+    t1.innerHTML += `<option value="${t}" ${t === lastTeam1 ? "selected" : ""}>${t}</option>`;
+    t2.innerHTML += `<option value="${t}" ${t === lastTeam2 ? "selected" : ""}>${t}</option>`;
   }
 
-  // Players dropdown
+  // Players dropdown - remember last selection
   const sel = document.getElementById("playerSelectInput");
   sel.innerHTML = "";
   for (const p in players) {
-    sel.innerHTML += `<option value="${p}">${p} (${players[p].team})</option>`;
+    sel.innerHTML += `<option value="${p}" ${p === lastPlayer ? "selected" : ""}>${p} (${players[p].team})</option>`;
   }
 
   // Player table - sorted by total (G+A), then by goals as tiebreaker
