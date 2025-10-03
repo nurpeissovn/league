@@ -73,7 +73,7 @@ func main() {
 	mux.Handle("/api/delete-match", withJSON(db, deleteMatchHandler))
 	mux.Handle("/api/add-player", withJSON(db, addPlayerHandler))
 	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
-
+	
 	// Team routes
 	mux.Handle("/api/add-team", withJSON(db, addTeamHandler))
 	mux.HandleFunc("/api/list-teams", func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +83,7 @@ func main() {
 		}
 		listTeamsHandler(db, w, r)
 	})
-
+	
 	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -91,7 +91,7 @@ func main() {
 		}
 		listPlayersHandler(db, w, r)
 	})
-
+	
 	mux.HandleFunc("/api/matches", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -394,7 +394,7 @@ func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid player", 400)
 		return
 	}
-
+	
 	_, err := db.ExecContext(r.Context(),
 		`DELETE FROM players WHERE name = $1 AND team_id = $2`,
 		req.Name, req.TeamID)
