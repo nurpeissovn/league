@@ -35,6 +35,52 @@ CREATE TABLE IF NOT EXISTS matches (
     REFERENCES teams(id) ON DELETE CASCADE
 );
 
+-- Step 1b: Patch legacy periods table structure
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_name = 'periods'
+  ) THEN
+    -- Ensure start_time column exists
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'periods' AND column_name = 'start_time'
+    ) THEN
+      ALTER TABLE periods ADD COLUMN start_time TIMESTAMP;
+      UPDATE periods SET start_time = COALESCE(start_time, created_at, NOW());
+      ALTER TABLE periods ALTER COLUMN start_time SET DEFAULT NOW();
+      ALTER TABLE periods ALTER COLUMN start_time SET NOT NULL;
+    END IF;
+
+    -- Ensure end_time column exists
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'periods' AND column_name = 'end_time'
+    ) THEN
+      ALTER TABLE periods ADD COLUMN end_time TIMESTAMP;
+    END IF;
+
+    -- Ensure is_active column exists
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'periods' AND column_name = 'is_active'
+    ) THEN
+      ALTER TABLE periods ADD COLUMN is_active BOOLEAN;
+      UPDATE periods SET is_active = true WHERE is_active IS NULL;
+      ALTER TABLE periods ALTER COLUMN is_active SET DEFAULT true;
+      ALTER TABLE periods ALTER COLUMN is_active SET NOT NULL;
+    END IF;
+
+    -- Ensure created_at column exists
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'periods' AND column_name = 'created_at'
+    ) THEN
+      ALTER TABLE periods ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT NOW();
+    END IF;
+  END IF;
+END $$;
+
 -- Step 2: Add period_id to teams if it doesn't exist
 DO $$ 
 BEGIN
