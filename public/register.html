@@ -69,19 +69,27 @@
     const currentDateISO = new Date().toISOString().slice(0,10);
     periodInput.value = currentDateISO;
 
-    function periodParam(){
-      const v = periodInput.value;
-      return v ? `?period=${v}` : '';
-    }
-
     async function refreshPeriodInfo(){
-      const res = await fetch('/api/period'+periodParam());
-      const p = await res.json();
-      periodInfo.textContent = `Период ${p.label}: ${new Date(p.start).toLocaleString()} — ${new Date(p.end).toLocaleString()}`;
+      try {
+        const res = await fetch('/api/current-period');
+        if(!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if(!data.period){
+          periodInfo.textContent = 'Активный период не найден';
+          return;
+        }
+        const start = new Date(data.period.start_time).toLocaleString();
+        const end = data.period.end_time ? new Date(data.period.end_time).toLocaleString() : 'идёт';
+        const remaining = typeof data.remaining_hours === 'number' ? data.remaining_hours.toFixed(1) : '?';
+        periodInfo.textContent = `Текущий период: ${data.period.name} (${start} — ${end}), осталось ~${remaining} ч.`;
+      } catch(err){
+        console.error(err);
+        periodInfo.textContent = 'Не удалось получить активный период';
+      }
     }
 
     async function loadTeams(){
-      const res = await fetch('/api/list-teams'+periodParam());
+      const res = await fetch('/api/list-teams');
       const data = await res.json();
       qs('#teamsList').textContent = `Команд: ${data.length}`;
       const sel = qs('#playerTeam');
