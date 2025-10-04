@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -232,7 +231,8 @@ func handleAddTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := currentPeriodID(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), 500); return
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	var id int64
 	err = db.QueryRowContext(ctx, `
@@ -242,7 +242,8 @@ func handleAddTeam(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, req.Name, pid).Scan(&id)
 	if err != nil {
-		http.Error(w, err.Error(), 500); return
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"id": id, "name": req.Name, "period_id": pid})
 }
@@ -250,14 +251,23 @@ func handleAddTeam(w http.ResponseWriter, r *http.Request) {
 func handleListTeams(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	rows, err := db.QueryContext(ctx, `SELECT id, name FROM teams WHERE period_id=$1 ORDER BY name`, pid)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	defer rows.Close()
 	var items []Team
 	for rows.Next() {
 		var t Team
-		if err := rows.Scan(&t.ID, &t.Name); err != nil { http.Error(w, err.Error(), 500); return }
+		if err := rows.Scan(&t.ID, &t.Name); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		items = append(items, t)
 	}
 	writeJSON(w, 200, items)
@@ -290,7 +300,8 @@ func handleAddPlayer(w http.ResponseWriter, r *http.Request) {
 		DO UPDATE SET goals=EXCLUDED.goals, assists=EXCLUDED.assists
 	`, req.Name, req.TeamID, req.Goals, req.Assists, pid)
 	if err != nil {
-		http.Error(w, err.Error(), 500); return
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -298,20 +309,27 @@ func handleAddPlayer(w http.ResponseWriter, r *http.Request) {
 func handleListPlayers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.team_id, p.goals, p.assists
 		FROM players p
 		WHERE p.period_id=$1
 		ORDER BY (p.goals + p.assists) DESC, p.goals DESC, p.name ASC
 	`, pid)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	defer rows.Close()
 	var items []Player
 	for rows.Next() {
 		var it Player
 		if err := rows.Scan(&it.ID, &it.Name, &it.TeamID, &it.Goals, &it.Assists); err != nil {
-			http.Error(w, err.Error(), 500); return
+			http.Error(w, err.Error(), 500)
+			return
 		}
 		items = append(items, it)
 	}
@@ -331,13 +349,16 @@ func handleAddMatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var pid1, pid2 int64
 	if err := db.QueryRowContext(ctx, `SELECT period_id FROM teams WHERE id=$1`, req.Team1ID).Scan(&pid1); err != nil {
-		http.Error(w, "team1 not found", 400); return
+		http.Error(w, "team1 not found", 400)
+		return
 	}
 	if err := db.QueryRowContext(ctx, `SELECT period_id FROM teams WHERE id=$1`, req.Team2ID).Scan(&pid2); err != nil {
-		http.Error(w, "team2 not found", 400); return
+		http.Error(w, "team2 not found", 400)
+		return
 	}
 	if pid1 != pid2 {
-		http.Error(w, "teams from different periods", 400); return
+		http.Error(w, "teams from different periods", 400)
+		return
 	}
 	var id int64
 	err := db.QueryRowContext(ctx, `
@@ -346,7 +367,8 @@ func handleAddMatch(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, req.Team1ID, req.Team2ID, req.Score1, req.Score2, pid1).Scan(&id)
 	if err != nil {
-		http.Error(w, err.Error(), 500); return
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"id": id})
 }
@@ -354,20 +376,27 @@ func handleAddMatch(w http.ResponseWriter, r *http.Request) {
 func handleListMatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, team1_id, team2_id, score1, score2, played_at
 		FROM matches
 		WHERE period_id=$1
 		ORDER BY played_at ASC, id ASC
 	`, pid)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	defer rows.Close()
 	var items []Match
 	for rows.Next() {
 		var m Match
 		if err := rows.Scan(&m.ID, &m.Team1ID, &m.Team2ID, &m.Score1, &m.Score2, &m.Played); err != nil {
-			http.Error(w, err.Error(), 500); return
+			http.Error(w, err.Error(), 500)
+			return
 		}
 		items = append(items, m)
 	}
@@ -382,10 +411,12 @@ func handleDeleteMatch(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/match/")
 	id, err := parseInt64(idStr)
 	if err != nil || id <= 0 {
-		http.Error(w, "bad id", 400); return
+		http.Error(w, "bad id", 400)
+		return
 	}
 	if _, err := db.Exec(`DELETE FROM matches WHERE id=$1`, id); err != nil {
-		http.Error(w, err.Error(), 500); return
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -399,10 +430,16 @@ func handleGetPeriod(w http.ResponseWriter, r *http.Request) {
 		End   time.Time `json:"end_at"`
 	}
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	err = db.QueryRowContext(ctx, `SELECT id, label, start_at, end_at FROM periods WHERE id=$1`, pid).
 		Scan(&p.ID, &p.Label, &p.Start, &p.End)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	writeJSON(w, 200, p)
 }
 
