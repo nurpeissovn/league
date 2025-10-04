@@ -1,408 +1,117 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>League Tracker</title>
-<style>
-body { font-family: Arial; background: #f0f4ff; padding: 20px; position: relative; overflow-x: hidden; }
-h1 { text-align: center; }
-.card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
-input, select { padding: 5px; margin: 5px; }
-button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer;}
-button:hover { background: #1e40af; }
-.btn-danger { background:#dc2626; }
-.btn-danger:hover { background:#b91c1c; }
-table { width: 100%; border-collapse: collapse; margin-top: 10px;}
-th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
-th { background: #f9f9f9; }
-.particle {
-    position: fixed;
-    width: 6px;
-    height: 6px;
-    background: orange;
-    border-radius: 50%;
-    pointer-events: none;
-    animation: explode 700ms ease-out forwards;
-}
-@keyframes explode {
-    from { transform: translate(0, 0) scale(1); opacity: 1; }
-    to { transform: translate(var(--x), var(--y)) scale(0.5); opacity: 0; }
-}
-.done-text {
-    position: fixed;
-    top: 150px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 24px;
-    color: green;
-    font-weight: bold;
-}
-.tables-container { display: flex; gap: 20px; flex-wrap: wrap; }
-.tables-container .card { flex: 1; min-width: 300px; }
-.flex-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scoreboard — Daily Period</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;max-width:1000px;margin:24px auto;padding:0 12px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #ddd;padding:8px;text-align:left}
+    th{background:#f4f4f4}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .muted{color:#555;font-size:0.9em}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#efefef}
+  </style>
 </head>
 <body>
-<h1>⚽ League Tracker</h1>
-
-<div class="card">
-  <h2>Enter Match Result</h2>
-  <div class="flex-row">
-    <div class="input-group">
-      <label>Team 1:</label>
-      <select id="team1"></select>
-      <input id="score1" type="number" value="0" min="0">
-    </div>
-    <div class="input-group">
-      <label>Team 2:</label>
-      <select id="team2"></select>
-      <input id="score2" type="number" value="0" min="0">
-    </div>
-    <button onclick="handleSubmit()">Submit Match</button>
-    <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
-  </div>
-</div>
-  
-<div class="card">
-  <h2>Add Player Statistics</h2>
-  <div class="flex-row">
-    <div class="input-group">
-      <label>Player:</label>
-      <select id="playerSelectInput"></select>
-    </div>
-    <div class="input-group">
-      <label>Goals ⚽:</label>
-      <input id="goals" type="number" value="0" min="0">
-    </div>
-    <div class="input-group">
-      <label>Assists 🎯:</label>
-      <input id="assists" type="number" value="0" min="0">
-    </div>
-    <button onclick="addPlayerStats()">Add Stats</button>
-  </div>
-</div>
-
-<div class="tables-container">
-  <div class="card" style="flex:1">
-    <h2>👤 Player Statistics</h2>
-    <table id="playerTable">
-      <thead>
-        <tr><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Total (G+A)</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+  <h1>Текущий зачёт (по дню)</h1>
+  <div class="row">
+    <label for="period">Дата периода:</label>
+    <input id="period" type="date" />
+    <button id="apply">Показать</button>
+    <span id="periodInfo" class="muted"></span>
   </div>
 
-  <div class="card" style="flex:1">
-    <h2>🏟️ Team Statistics</h2>
-    <table id="teamTable">
-      <thead>
-        <tr><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card">
-  <h2>📜 Match History</h2>
-  <table id="historyTable">
-    <thead><tr><th>#</th><th>Match</th><th>Score</th></tr></thead>
+  <h2>Игроки (гол+пас)</h2>
+  <table id="tblPlayers">
+    <thead>
+      <tr><th>#</th><th>Игрок</th><th>Команда</th><th>Голы</th><th>Пасы</th><th>Сумма</th></tr>
+    </thead>
     <tbody></tbody>
   </table>
-</div>
 
-<script>
-const teams = {};           // { teamName: { id, P,W,D,L,GF,GA,GD,Pts } }
-const players = {};         // { playerName: { team, teamId, goals, assists } }
-const history = [];         // [{ id, t1, s1, t2, s2 }]
-let teamIdToName = {};      // { id: name }
+  <h2>Матчи</h2>
+  <table id="tblMatches">
+    <thead>
+      <tr><th>#</th><th>Время</th><th>Команда 1</th><th>Счёт</th><th>Команда 2</th><th>Действие</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-// remember user selections so dropdowns stay put
-let sticky = { team1: null, team2: null, player: null };
+  <script>
+    const qs = s=>document.querySelector(s);
+    const periodEl = qs('#period');
+    periodEl.value = new Date().toISOString().slice(0,10);
 
-async function fetchWithRetry(url, retries = 3, delay = 1000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return response;
-    } catch(e) {}
-    if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
-  }
-  throw new Error(`Failed to fetch ${url} after ${retries} attempts`);
-}
-
-async function loadAllData() {
-  try {
-    const resTeams = await fetchWithRetry("/api/list-teams");
-    const dbTeams = await resTeams.json(); // [{id, name}]
-    for (const t of dbTeams) {
-      teams[t.name] = { id: t.id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
-      teamIdToName[t.id] = t.name;
+    function periodParam(){
+      const v = periodEl.value;
+      return v ? `?period=${v}` : '';
     }
 
-    try {
-      const resP = await fetchWithRetry("/api/players");
-      const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
-      for (const p of dbPlayers) {
-        const teamName = teamIdToName[p.team_id] || "Unknown";
-        if (!teams[teamName]) teams[teamName] = { id: p.team_id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
-        players[p.name] = { team: teamName, teamId: p.team_id, goals: p.goals, assists: p.assists };
-      }
-    } catch {}
+    async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+    async function postJSON(url, body){ const r=await fetch(url,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+    async function del(url){ const r=await fetch(url,{method:'DELETE'}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
 
-    // load matches (now store id to support undo)
-    try {
-      const resM = await fetchWithRetry("/api/matches");
-      const dbMatches = await resM.json(); // [{id,team1_id,team2_id,score1,score2,played_at}]
-      for (const m of dbMatches) {
-        const t1 = teamIdToName[m.team1_id];
-        const t2 = teamIdToName[m.team2_id];
-        if (!t1 || !t2) continue;
+    async function loadPeriodInfo(){
+      const p = await getJSON('/api/period'+periodParam());
+      qs('#periodInfo').textContent = `Период ${p.label}`;
+    }
 
-        ensureTeam(t1, m.team1_id);
-        ensureTeam(t2, m.team2_id);
+    async function loadPlayers(){
+      const [players, teams] = await Promise.all([
+        getJSON('/api/players'+periodParam()),
+        getJSON('/api/list-teams'+periodParam())
+      ]);
+      const teamById = new Map(teams.map(t=>[t.id, t]));
+      const tbody = qs('#tblPlayers tbody'); tbody.innerHTML = '';
+      players.forEach((pl, i)=>{
+        const tr = document.createElement('tr');
+        const sum = (pl.goals||0) + (pl.assists||0);
+        tr.innerHTML = `<td>${i+1}</td>
+                        <td>${pl.name}</td>
+                        <td><span class="pill">${teamById.get(pl.team_id)?.name||'-'}</span></td>
+                        <td>${pl.goals||0}</td>
+                        <td>${pl.assists||0}</td>
+                        <td><b>${sum}</b></td>`;
+        tbody.appendChild(tr);
+      });
+    }
 
-        applyMatchToTables(t1, m.score1, t2, m.score2, +1);
-        history.push({ id: m.id, t1, s1: m.score1, t2, s2: m.score2 });
-      }
-    } catch {}
+    async function loadMatches(){
+      const [matches, teams] = await Promise.all([
+        getJSON('/api/matches'+periodParam()),
+        getJSON('/api/list-teams'+periodParam())
+      ]);
+      const teamById = new Map(teams.map(t=>[t.id, t]));
+      const tbody = qs('#tblMatches tbody'); tbody.innerHTML='';
+      matches.forEach((m, i)=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${i+1}</td>
+                        <td>${new Date(m.played_at || m.played).toLocaleString()}</td>
+                        <td>${teamById.get(m.team1_id)?.name||m.team1_id}</td>
+                        <td>${m.score1} : ${m.score2}</td>
+                        <td>${teamById.get(m.team2_id)?.name||m.team2_id}</td>
+                        <td><button data-id="${m.id}">Удалить</button></td>`;
+        tbody.appendChild(tr);
+      });
+      tbody.querySelectorAll('button[data-id]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          if(!confirm('Удалить матч?')) return;
+          await del('/api/match/'+btn.dataset.id);
+          await loadMatches();
+        });
+      });
+    }
 
-    render();
-  } catch (e) {
-    console.error(e);
-    alert("Failed to load data: " + e.message);
-  }
-}
-
-function ensureTeam(name, id) {
-  if (!teams[name]) teams[name] = { id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
-}
-
-function applyMatchToTables(t1, s1, t2, s2, dir) {
-  // dir = +1 to apply, -1 to revert
-  teams[t1].P += dir; teams[t2].P += dir;
-  teams[t1].GF += dir * s1; teams[t1].GA += dir * s2;
-  teams[t2].GF += dir * s2; teams[t2].GA += dir * s1;
-
-  if (s1 > s2) { teams[t1].W += dir; teams[t2].L += dir; teams[t1].Pts += 3*dir; }
-  else if (s1 < s2) { teams[t2].W += dir; teams[t1].L += dir; teams[t2].Pts += 3*dir; }
-  else { teams[t1].D += dir; teams[t2].D += dir; teams[t1].Pts += dir; teams[t2].Pts += dir; }
-
-  teams[t1].GD = teams[t1].GF - teams[t1].GA;
-  teams[t2].GD = teams[t2].GF - teams[t2].GA;
-}
-
-async function handleSubmit() {
-  const t1Sel = document.getElementById("team1");
-  const t2Sel = document.getElementById("team2");
-  const pSel  = document.getElementById("playerSelectInput");
-
-  const t1 = t1Sel.value;
-  const t2 = t2Sel.value;
-  const s1 = parseInt(document.getElementById("score1").value) || 0;
-  const s2 = parseInt(document.getElementById("score2").value) || 0;
-
-  if (!t1 || !t2) return alert("Pick both teams");
-  if (t1 === t2) return alert("Team cannot play itself!");
-
-  // remember current choices so they stick after render
-  sticky.team1 = t1;
-  sticky.team2 = t2;
-  sticky.player = pSel.value || null;
-
-  try {
-    const res = await fetch("/api/add-match", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        team1_id: teams[t1].id,
-        team2_id: teams[t2].id,
-        score1: s1,
-        score2: s2
-      })
+    qs('#apply').addEventListener('click', async ()=>{
+      await loadPeriodInfo();
+      await Promise.all([loadPlayers(), loadMatches()]);
     });
-    if (!res.ok) return alert("Failed to save match");
-    const data = await res.json(); // { id }
 
-    // update local state
-    applyMatchToTables(t1, s1, t2, s2, +1);
-    history.push({ id: data.id, t1, s1, t2, s2 });
-
-    render();
-    fireworks("Done ✅");
-  } catch (e) {
-    console.error(e);
-    alert("Network error while saving match");
-  }
-}
-
-async function undoLastMatch() {
-  if (history.length === 0) return alert("No matches to undo");
-  const last = history[history.length - 1];
-
-  if (!confirm(`Undo last match: ${last.t1} ${last.s1} - ${last.s2} ${last.t2}?`)) return;
-
-  try {
-    const res = await fetch("/api/delete-match", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ id: last.id })
-    });
-    if (!res.ok) return alert("Failed to undo on server");
-
-    // revert local tables and history
-    applyMatchToTables(last.t1, last.s1, last.t2, last.s2, -1);
-    history.pop();
-
-    // keep current dropdown selections
-    const t1Sel = document.getElementById("team1");
-    const t2Sel = document.getElementById("team2");
-    const pSel  = document.getElementById("playerSelectInput");
-    sticky.team1 = t1Sel.value || sticky.team1;
-    sticky.team2 = t2Sel.value || sticky.team2;
-    sticky.player = pSel.value   || sticky.player;
-
-    render();
-    fireworks("Undone ⏪");
-  } catch (e) {
-    console.error(e);
-    alert("Network error while undoing");
-  }
-}
-
-async function addPlayerStats() {
-  const playerName = document.getElementById("playerSelectInput").value;
-  const goals = parseInt(document.getElementById("goals").value) || 0;
-  const assists = parseInt(document.getElementById("assists").value) || 0;
-
-  if (!playerName) return alert("Please select a player");
-
-  // remember player selection
-  sticky.player = playerName;
-
-  const player = players[playerName];
-  const newGoals = player.goals + goals;
-  const newAssists = player.assists + assists;
-
-  try {
-    const res = await fetch("/api/add-player", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: playerName,
-        team_id: player.teamId,
-        goals: newGoals,
-        assists: newAssists
-      })
-    });
-    if (!res.ok) return alert("Failed to update player stats");
-
-    player.goals = newGoals;
-    player.assists = newAssists;
-    document.getElementById("goals").value = "0";
-    document.getElementById("assists").value = "0";
-
-    render();
-    fireworks("Done ✅");
-  } catch (e) {
-    console.error(e);
-    alert("Network error while updating player stats");
-  }
-}
-
-function fireworks(text = "") {
-  const centerX = window.innerWidth / 2;
-  const centerY = 150;
-  for (let i = 0; i < 25; i++) {
-    const p = document.createElement("div");
-    p.className = "particle";
-    const angle = Math.random() * 2 * Math.PI;
-    const distance = 100 + Math.random() * 50;
-    const x = Math.cos(angle) * distance;
-    const y = Math.sin(angle) * distance;
-    p.style.left = `${centerX}px`;
-    p.style.top = `${centerY}px`;
-    p.style.setProperty("--x", `${x}px`);
-    p.style.setProperty("--y", `${y}px`);
-    document.body.appendChild(p);
-    setTimeout(() => p.remove(), 1300);
-  }
-  if (text) {
-    const t = document.createElement("div");
-    t.className = "done-text";
-    t.textContent = text;
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2000);
-  }
-}
-
-function render() {
-  // cache current UI choices first (in case called without setting sticky)
-  const t1Sel = document.getElementById("team1");
-  const t2Sel = document.getElementById("team2");
-  const pSel  = document.getElementById("playerSelectInput");
-  if (t1Sel) sticky.team1 = sticky.team1 ?? t1Sel.value ?? null;
-  if (t2Sel) sticky.team2 = sticky.team2 ?? t2Sel.value ?? null;
-  if (pSel)  sticky.player = sticky.player ?? pSel.value ?? null;
-
-  // Teams dropdowns
-  const t1 = document.getElementById("team1");
-  const t2 = document.getElementById("team2");
-  t1.innerHTML = "";
-  t2.innerHTML = "";
-  for (const t in teams) {
-    t1.innerHTML += `<option value="${t}">${t}</option>`;
-    t2.innerHTML += `<option value="${t}">${t}</option>`;
-  }
-  // restore selections if still valid
-  if (sticky.team1 && teams[sticky.team1]) t1.value = sticky.team1;
-  if (sticky.team2 && teams[sticky.team2]) t2.value = sticky.team2;
-
-  // Players dropdown
-  const sel = document.getElementById("playerSelectInput");
-  sel.innerHTML = "";
-  for (const p in players) {
-    sel.innerHTML += `<option value="${p}">${p} (${players[p].team})</option>`;
-  }
-  if (sticky.player && players[sticky.player]) sel.value = sticky.player;
-
-  // Player table - sorted
-  const sortedPlayers = Object.entries(players).sort(([, a], [, b]) => {
-    const totalA = a.goals + a.assists;
-    const totalB = b.goals + b.assists;
-    if (totalB !== totalA) return totalB - totalA;
-    return b.goals - a.goals;
-  });
-  document.querySelector("#playerTable tbody").innerHTML =
-    sortedPlayers.map(([name, p], idx) => {
-      const total = p.goals + p.assists;
-      let bg = "";
-      if (idx === 0) bg = "background-color: gold; font-weight:bold;";
-      else if (idx === 1) bg = "background-color: silver; font-weight:bold;";
-      else if (idx === 2) bg = "background-color: #cd7f32; font-weight:bold;";
-      return `<tr style="${bg}"><td>${name}</td><td>${p.team}</td><td>⚽ ${p.goals}</td><td>🎯 ${p.assists}</td><td>${total}</td></tr>`;
-    }).join("");
-
-  // Team table - sorted
-  const sortedTeams = Object.entries(teams).sort(([, a], [, b]) => {
-    if (b.Pts !== a.Pts) return b.Pts - a.Pts;
-    return b.GD - a.GD;
-  });
-  document.querySelector("#teamTable tbody").innerHTML =
-    sortedTeams.map(([t, x]) =>
-      `<tr><td>${t}</td><td>${x.P}</td><td>${x.W}</td><td>${x.D}</td><td>${x.L}</td>
-       <td>${x.GF}</td><td>${x.GA}</td><td>${x.GD}</td><td>${x.Pts}</td></tr>`
-    ).join("");
-
-  // Match history
-  document.querySelector("#historyTable tbody").innerHTML =
-    history.map((m, i) => `<tr><td>${i+1}</td><td>${m.t1} vs ${m.t2}</td><td>${m.t1} ${m.s1} - ${m.s2} ${m.t2}</td></tr>`).join("");
-}
-
-// Load all data on page load
-loadAllData();
-</script>
+    // initial
+    loadPeriodInfo().then(()=>Promise.all([loadPlayers(), loadMatches()]));
+  </script>
 </body>
 </html>

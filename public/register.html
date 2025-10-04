@@ -1,197 +1,151 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>League Registration</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register — Daily Period</title>
   <style>
-    body { font-family: Arial; background: #f0f4ff; padding: 20px; }
-    h1 { text-align: center; }
-    .card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
-    input, select { padding: 5px; margin: 5px; }
-    button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer;}
-    button:hover { background: #1e40af; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px;}
-    th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
-    th { background: #f9f9f9; }
+    body{font-family:system-ui,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 12px}
+    h2{margin-top:24px}
+    fieldset{margin:12px 0;padding:12px;border-radius:8px}
+    label{display:block;margin:6px 0 4px}
+    input,select,button{padding:8px;border-radius:6px;border:1px solid #ccc}
+    button{cursor:pointer}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .muted{color:#555;font-size:0.9em}
   </style>
 </head>
 <body>
-  <h1>🏟️ League Registration</h1>
+  <h1>Регистрация (суточные периоды)</h1>
+  <p class="muted">По умолчанию — текущий день (Asia/Almaty). Для просмотра/записи в архив можно выбрать дату.</p>
 
-  <div class="card">
-    <h2>Add Team</h2>
-    <input type="text" id="teamName" placeholder="Team Name">
-    <button onclick="addTeam()">Add Team</button>
-  </div>
+  <fieldset>
+    <legend>Период</legend>
+    <div class="row">
+      <label for="period">Дата периода (YYYY-MM-DD)</label>
+      <input id="period" type="date" />
+      <button id="applyPeriod">Применить</button>
+      <span id="periodInfo" class="muted"></span>
+    </div>
+  </fieldset>
 
-  <div class="card">
-    <h2>Add Player</h2>
-    <input type="text" id="playerName" placeholder="Player Name">
-    <select id="playerTeam"></select>
-    <button onclick="addPlayer()">Add Player</button>
-  </div>
+  <fieldset>
+    <legend>Команда</legend>
+    <div class="row">
+      <input id="teamName" placeholder="Название команды" />
+      <button id="addTeam">Добавить</button>
+    </div>
+    <div id="teamsList" class="muted"></div>
+  </fieldset>
 
-  <div class="card">
-    <h2>Registered Teams & Players</h2>
-    <table id="regTable">
-      <thead><tr><th>Team</th><th>Players</th><th>Action</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
+  <fieldset>
+    <legend>Игрок</legend>
+    <div class="row">
+      <select id="playerTeam"></select>
+      <input id="playerName" placeholder="ФИО игрока" />
+      <input id="playerGoals" type="number" value="0" style="width:90px" />
+      <input id="playerAssists" type="number" value="0" style="width:90px" />
+      <button id="addPlayer">Добавить</button>
+    </div>
+  </fieldset>
 
-  <div style="text-align:center">
-    <button onclick="goToTracker()">Go to Tracker</button>
-  </div>
+  <fieldset>
+    <legend>Матч</legend>
+    <div class="row">
+      <select id="mTeam1"></select>
+      <input id="mScore1" type="number" value="0" style="width:70px" />
+      <span>—</span>
+      <input id="mScore2" type="number" value="0" style="width:70px" />
+      <select id="mTeam2"></select>
+      <button id="addMatch">Добавить</button>
+    </div>
+  </fieldset>
 
   <script>
-    const teams = {}; // { teamName: { id: number, players: [names] } }
-  
-    async function loadTeamsFromDB() {
-      try {
-        const res = await fetch("/api/list-teams");
-        if (!res.ok) return;
-        const dbTeams = await res.json(); // [{id, name}]
-        
-        for (const t of dbTeams) {
-          teams[t.name] = { id: t.id, players: [] };
-        }
-        
-        // Load players
-        const resP = await fetch("/api/players");
-        if (resP.ok) {
-          const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
-          for (const p of dbPlayers) {
-            const teamEntry = Object.values(teams).find(t => t.id === p.team_id);
-            if (teamEntry) {
-              const teamName = Object.keys(teams).find(k => teams[k].id === p.team_id);
-              teamEntry.players.push(p.name);
-            }
-          }
-        }
-        
-        renderDropdowns();
-        renderTable();
-      } catch (e) {
-        console.error("Failed to load teams:", e);
+    const qs = (s)=>document.querySelector(s);
+    const periodInput = qs('#period');
+    const periodInfo = qs('#periodInfo');
+    const currentDateISO = new Date().toISOString().slice(0,10);
+    periodInput.value = currentDateISO;
+
+    function periodParam(){
+      const v = periodInput.value;
+      return v ? `?period=${v}` : '';
+    }
+
+    async function refreshPeriodInfo(){
+      const res = await fetch('/api/period'+periodParam());
+      const p = await res.json();
+      periodInfo.textContent = `Период ${p.label}: ${new Date(p.start).toLocaleString()} — ${new Date(p.end).toLocaleString()}`;
+    }
+
+    async function loadTeams(){
+      const res = await fetch('/api/list-teams'+periodParam());
+      const data = await res.json();
+      qs('#teamsList').textContent = `Команд: ${data.length}`;
+      const sel = qs('#playerTeam');
+      const m1 = qs('#mTeam1');
+      const m2 = qs('#mTeam2');
+      sel.innerHTML = '';
+      m1.innerHTML = '';
+      m2.innerHTML = '';
+      for(const t of data){
+        const o1 = document.createElement('option'); o1.value=t.id; o1.textContent=t.name;
+        const o2 = document.createElement('option'); o2.value=t.id; o2.textContent=t.name;
+        const o3 = document.createElement('option'); o3.value=t.id; o3.textContent=t.name;
+        sel.appendChild(o1); m1.appendChild(o2); m2.appendChild(o3);
       }
     }
-  
-    async function addTeam() {
-      const name = document.getElementById("teamName").value.trim();
-      if (!name) return alert("Enter team name!");
-      if (teams[name]) return alert("Team already exists!");
-  
-      try {
-        const res = await fetch("/api/add-team", {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({ name })
-        });
-        if (!res.ok) {
-          const msg = await res.text();
-          alert("Failed to add team: " + msg);
-          return;
-        }
-        const data = await res.json(); // { id, name }
-        teams[name] = { id: data.id, players: [] };
-        document.getElementById("teamName").value = "";
-        renderDropdowns();
-        renderTable();
-      } catch (e) {
-        console.error(e);
-        alert("Network error while adding team");
-      }
-    }
-  
-    async function addPlayer() {
-      const name = document.getElementById("playerName").value.trim();
-      const teamName = document.getElementById("playerTeam").value;
-      if (!name) return alert("Enter player name!");
-      if (!teamName) return alert("Select team!");
-      
-      const team = teams[teamName];
-      if (team.players.includes(name)) return alert("Player already exists in this team!");
-      
-      try {
-        const res = await fetch("/api/add-player", {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({
-            name: name,
-            team_id: team.id,
-            goals: 0,
-            assists: 0
-          })
-        });
-        
-        if (!res.ok) {
-          const msg = await res.text();
-          alert("Failed to add player: " + msg);
-          return;
-        }
-        
-        team.players.push(name);
-        document.getElementById("playerName").value = "";
-        renderTable();
-      } catch (e) {
-        console.error(e);
-        alert("Network error while adding player");
-      }
-    }
-  
-    async function removePlayer(teamName, playerName) {
-      if (!confirm(`Remove ${playerName} from ${teamName}?`)) return;
-      
-      try {
-        const res = await fetch("/api/delete-player", {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({
-            name: playerName,
-            team_id: teams[teamName].id
-          })
-        });
-        
-        if (!res.ok) {
-          alert("Failed to remove player");
-          return;
-        }
-        
-        teams[teamName].players = teams[teamName].players.filter(p => p !== playerName);
-        renderTable();
-      } catch (e) {
-        console.error(e);
-        alert("Network error while removing player");
-      }
-    }
-  
-    function renderDropdowns() {
-      const select = document.getElementById("playerTeam");
-      select.innerHTML = "";
-      for (const t in teams) {
-        select.innerHTML += `<option value="${t}">${t}</option>`;
-      }
-    }
-  
-    function renderTable() {
-      const tbody = document.querySelector("#regTable tbody");
-      tbody.innerHTML = "";
-      for (const t in teams) {
-        const players = teams[t].players.map(p => 
-          `${p} <button onclick="removePlayer('${t}','${p}')">Remove</button>`
-        ).join("<br>");
-        tbody.innerHTML += `<tr><td>${t}</td><td>${players || "No players"}</td><td>-</td></tr>`;
-      }
-    }
-  
-    function goToTracker() {
-      window.location.href = "index.html";
-    }
-  
-    // Load teams on page load
-    loadTeamsFromDB();
+
+    qs('#applyPeriod').addEventListener('click', async ()=>{
+      await refreshPeriodInfo();
+      await loadTeams();
+    });
+
+    qs('#addTeam').addEventListener('click', async ()=>{
+      const name = qs('#teamName').value.trim();
+      if(!name) return alert('Введите название команды');
+      const res = await fetch('/api/add-team', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name})
+      });
+      if(!res.ok){ alert(await res.text()); return; }
+      qs('#teamName').value='';
+      await loadTeams();
+    });
+
+    qs('#addPlayer').addEventListener('click', async ()=>{
+      const name = qs('#playerName').value.trim();
+      const team_id = Number(qs('#playerTeam').value);
+      const goals = Number(qs('#playerGoals').value||0);
+      const assists = Number(qs('#playerAssists').value||0);
+      if(!name || !team_id) return alert('Заполните игрока и команду');
+      const res = await fetch('/api/add-player', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name, team_id, goals, assists})
+      });
+      if(!res.ok){ alert(await res.text()); return; }
+      qs('#playerName').value=''; qs('#playerGoals').value=0; qs('#playerAssists').value=0;
+      alert('Игрок сохранён');
+    });
+
+    qs('#addMatch').addEventListener('click', async ()=>{
+      const team1_id = Number(qs('#mTeam1').value);
+      const team2_id = Number(qs('#mTeam2').value);
+      const score1 = Number(qs('#mScore1').value||0);
+      const score2 = Number(qs('#mScore2').value||0);
+      if(!team1_id || !team2_id || team1_id===team2_id) return alert('Выберите две разные команды');
+      const res = await fetch('/api/add-match', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({team1_id, team2_id, score1, score2})
+      });
+      if(!res.ok){ alert(await res.text()); return; }
+      alert('Матч добавлен');
+    });
+
+    // initial
+    refreshPeriodInfo().then(loadTeams);
   </script>
-  
 </body>
 </html>
