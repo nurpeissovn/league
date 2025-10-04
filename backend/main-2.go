@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -67,7 +68,7 @@ func getenv(k, def string) string {
 func mustInitDB() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Println("WARNING: DATABASE_URL is empty; using local defaults if any. Set it in your env.")
+		log.Println("WARNING: DATABASE_URL is empty; set it in your env.")
 	}
 	var err error
 	db, err = sql.Open("postgres", dbURL)
@@ -83,7 +84,7 @@ func mustInitDB() {
 }
 
 func initSchema(db *sql.DB) error {
-	// Note: idempotent schema init (CREATE IF NOT EXISTS / ALTER ADD IF NOT EXISTS)
+	// Idempotent schema init + migrations (handles existing tables w/o period_id)
 	schema := `
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
@@ -116,32 +117,58 @@ BEGIN
   RETURN pid;
 END; $$ LANGUAGE plpgsql;
 
+-- Core tables (create if missing)
 CREATE TABLE IF NOT EXISTS teams (
   id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  period_id BIGINT REFERENCES periods(id) ON DELETE RESTRICT
+  name TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_teams_name_period ON teams(period_id, name);
-
 CREATE TABLE IF NOT EXISTS players (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
   goals INT NOT NULL DEFAULT 0,
-  assists INT NOT NULL DEFAULT 0,
-  period_id BIGINT REFERENCES periods(id) ON DELETE RESTRICT
+  assists INT NOT NULL DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_players_name_team_period ON players(period_id, team_id, name);
-
 CREATE TABLE IF NOT EXISTS matches (
   id BIGSERIAL PRIMARY KEY,
   team1_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
   team2_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
   score1 INT NOT NULL,
   score2 INT NOT NULL,
-  played_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  period_id BIGINT REFERENCES periods(id) ON DELETE RESTRICT
+  played_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Add period_id if it doesn't exist (migration-safe)
+ALTER TABLE teams   ADD COLUMN IF NOT EXISTS period_id BIGINT REFERENCES periods(id) ON DELETE RESTRICT;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS period_id BIGINT REFERENCES periods(id) ON DELETE RESTRICT;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS period_id BIGINT REFERENCES periods(id) ON DELETE RESTRICT;
+
+-- Backfill NULL period_id for existing rows.
+-- 1) ensure today's period exists
+SELECT ensure_period_for((now() at time zone 'Asia/Almaty')::date);
+
+-- 2) teams/players -> default to today's period if NULL
+WITH p AS (
+  SELECT id FROM periods
+  WHERE label = to_char((now() at time zone 'Asia/Almaty')::date,'YYYY-MM-DD')
+  LIMIT 1
+)
+UPDATE teams   SET period_id = (SELECT id FROM p) WHERE period_id IS NULL;
+WITH p AS (
+  SELECT id FROM periods
+  WHERE label = to_char((now() at time zone 'Asia/Almaty')::date,'YYYY-MM-DD')
+  LIMIT 1
+)
+UPDATE players SET period_id = (SELECT id FROM p) WHERE period_id IS NULL;
+
+-- 3) matches -> derive by played_at local date
+UPDATE matches m
+SET period_id = ensure_period_for((m.played_at at time zone 'Asia/Almaty')::date)
+WHERE m.period_id IS NULL;
+
+-- Indexes (create if missing)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_teams_name_period ON teams(period_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_players_name_team_period ON players(period_id, team_id, name);
 CREATE INDEX IF NOT EXISTS ix_matches_period_time ON matches(period_id, played_at);
 `
 	_, err := db.Exec(schema)
@@ -152,7 +179,6 @@ func currentPeriodID(ctx context.Context) (int64, error) {
 	var id int64
 	err := db.QueryRowContext(ctx, `SELECT id FROM current_period`).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		// lazily create today's period in Asia/Almaty
 		_, err = db.ExecContext(ctx, `SELECT ensure_period_for((now() at time zone 'Asia/Almaty')::date)`)
 		if err != nil {
 			return 0, err
@@ -163,21 +189,16 @@ func currentPeriodID(ctx context.Context) (int64, error) {
 }
 
 func periodIDFromRequest(r *http.Request, ctx context.Context) (int64, error) {
-	// ?period=YYYY-MM-DD -> view/archive specific day
 	q := r.URL.Query().Get("period")
 	if q == "" {
 		return currentPeriodID(ctx)
 	}
-	// ensure period exists for that date; do not auto-create for future
-	// but harmless if created; keep simple and idempotent
 	_, err := db.ExecContext(ctx, `SELECT ensure_period_for($1::date)`, q)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
-	err = db.QueryRowContext(ctx, `
-		SELECT id FROM periods WHERE label = $1
-	`, q).Scan(&id)
+	err = db.QueryRowContext(ctx, `SELECT id FROM periods WHERE label = $1`, q).Scan(&id)
 	return id, err
 }
 
@@ -211,8 +232,7 @@ func handleAddTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := currentPeriodID(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
+		http.Error(w, err.Error(), 500); return
 	}
 	var id int64
 	err = db.QueryRowContext(ctx, `
@@ -222,8 +242,7 @@ func handleAddTeam(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, req.Name, pid).Scan(&id)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
+		http.Error(w, err.Error(), 500); return
 	}
 	writeJSON(w, 200, map[string]any{"id": id, "name": req.Name, "period_id": pid})
 }
@@ -231,23 +250,14 @@ func handleAddTeam(w http.ResponseWriter, r *http.Request) {
 func handleListTeams(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	rows, err := db.QueryContext(ctx, `SELECT id, name FROM teams WHERE period_id=$1 ORDER BY name`, pid)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
 	var items []Team
 	for rows.Next() {
 		var t Team
-		if err := rows.Scan(&t.ID, &t.Name); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
+		if err := rows.Scan(&t.ID, &t.Name); err != nil { http.Error(w, err.Error(), 500); return }
 		items = append(items, t)
 	}
 	writeJSON(w, 200, items)
@@ -268,7 +278,6 @@ func handleAddPlayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	// trust period from team
 	var pid int64
 	if err := db.QueryRowContext(ctx, `SELECT period_id FROM teams WHERE id=$1`, req.TeamID).Scan(&pid); err != nil {
 		http.Error(w, "team not found", 400)
@@ -281,8 +290,7 @@ func handleAddPlayer(w http.ResponseWriter, r *http.Request) {
 		DO UPDATE SET goals=EXCLUDED.goals, assists=EXCLUDED.assists
 	`, req.Name, req.TeamID, req.Goals, req.Assists, pid)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
+		http.Error(w, err.Error(), 500); return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -290,27 +298,20 @@ func handleAddPlayer(w http.ResponseWriter, r *http.Request) {
 func handleListPlayers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	rows, err := db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.team_id, p.goals, p.assists
 		FROM players p
 		WHERE p.period_id=$1
 		ORDER BY (p.goals + p.assists) DESC, p.goals DESC, p.name ASC
 	`, pid)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
 	var items []Player
 	for rows.Next() {
 		var it Player
 		if err := rows.Scan(&it.ID, &it.Name, &it.TeamID, &it.Goals, &it.Assists); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
+			http.Error(w, err.Error(), 500); return
 		}
 		items = append(items, it)
 	}
@@ -330,16 +331,13 @@ func handleAddMatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var pid1, pid2 int64
 	if err := db.QueryRowContext(ctx, `SELECT period_id FROM teams WHERE id=$1`, req.Team1ID).Scan(&pid1); err != nil {
-		http.Error(w, "team1 not found", 400)
-		return
+		http.Error(w, "team1 not found", 400); return
 	}
 	if err := db.QueryRowContext(ctx, `SELECT period_id FROM teams WHERE id=$1`, req.Team2ID).Scan(&pid2); err != nil {
-		http.Error(w, "team2 not found", 400)
-		return
+		http.Error(w, "team2 not found", 400); return
 	}
 	if pid1 != pid2 {
-		http.Error(w, "teams from different periods", 400)
-		return
+		http.Error(w, "teams from different periods", 400); return
 	}
 	var id int64
 	err := db.QueryRowContext(ctx, `
@@ -348,8 +346,7 @@ func handleAddMatch(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, req.Team1ID, req.Team2ID, req.Score1, req.Score2, pid1).Scan(&id)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
+		http.Error(w, err.Error(), 500); return
 	}
 	writeJSON(w, 200, map[string]any{"id": id})
 }
@@ -357,27 +354,20 @@ func handleAddMatch(w http.ResponseWriter, r *http.Request) {
 func handleListMatches(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, team1_id, team2_id, score1, score2, played_at
 		FROM matches
 		WHERE period_id=$1
 		ORDER BY played_at ASC, id ASC
 	`, pid)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
 	var items []Match
 	for rows.Next() {
 		var m Match
 		if err := rows.Scan(&m.ID, &m.Team1ID, &m.Team2ID, &m.Score1, &m.Score2, &m.Played); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
+			http.Error(w, err.Error(), 500); return
 		}
 		items = append(items, m)
 	}
@@ -392,12 +382,10 @@ func handleDeleteMatch(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/match/")
 	id, err := parseInt64(idStr)
 	if err != nil || id <= 0 {
-		http.Error(w, "bad id", 400)
-		return
+		http.Error(w, "bad id", 400); return
 	}
 	if _, err := db.Exec(`DELETE FROM matches WHERE id=$1`, id); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
+		http.Error(w, err.Error(), 500); return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -410,18 +398,11 @@ func handleGetPeriod(w http.ResponseWriter, r *http.Request) {
 		Start time.Time `json:"start_at"`
 		End   time.Time `json:"end_at"`
 	}
-	// current or specific
 	pid, err := periodIDFromRequest(r, ctx)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	err = db.QueryRowContext(ctx, `SELECT id, label, start_at, end_at FROM periods WHERE id=$1`, pid).
 		Scan(&p.ID, &p.Label, &p.Start, &p.End)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	writeJSON(w, 200, p)
 }
 
