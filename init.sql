@@ -1,4 +1,4 @@
--- Step 1: Create periods table if it doesn't exist
+-- Step 1: Base tables for periods, teams, matches
 CREATE TABLE IF NOT EXISTS periods (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -8,10 +8,39 @@ CREATE TABLE IF NOT EXISTS periods (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- Step 1a: Ensure base tables exist for fresh databases
+CREATE TABLE IF NOT EXISTS teams (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  period_id INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (name, period_id),
+  CONSTRAINT fk_teams_period FOREIGN KEY (period_id)
+    REFERENCES periods(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS matches (
+  id SERIAL PRIMARY KEY,
+  team1_id INT NOT NULL,
+  team2_id INT NOT NULL,
+  score1 INT NOT NULL DEFAULT 0,
+  score2 INT NOT NULL DEFAULT 0,
+  played_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  period_id INT NOT NULL,
+  CONSTRAINT fk_matches_period FOREIGN KEY (period_id)
+    REFERENCES periods(id) ON DELETE CASCADE,
+  CONSTRAINT fk_matches_team1 FOREIGN KEY (team1_id)
+    REFERENCES teams(id) ON DELETE CASCADE,
+  CONSTRAINT fk_matches_team2 FOREIGN KEY (team2_id)
+    REFERENCES teams(id) ON DELETE CASCADE
+);
+
 -- Step 2: Add period_id to teams if it doesn't exist
 DO $$ 
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_name = 'teams'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'teams' AND column_name = 'period_id'
   ) THEN
@@ -40,7 +69,9 @@ END $$;
 -- Step 3: Add period_id to matches if it doesn't exist
 DO $$ 
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_name = 'matches'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'matches' AND column_name = 'period_id'
   ) THEN
