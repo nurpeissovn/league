@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS teams (
 
 CREATE INDEX IF NOT EXISTS idx_teams_period ON teams(period_id);
 
--- Players table with period reference
+-- Players table
 CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -51,22 +51,7 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE INDEX IF NOT EXISTS idx_matches_period ON matches(period_id);
 CREATE INDEX IF NOT EXISTS idx_matches_played_at ON matches(played_at);
 
--- View for current period data (for frontend)
-CREATE OR REPLACE VIEW current_period_summary AS
-SELECT 
-  p.id as period_id,
-  p.name as period_name,
-  p.start_time,
-  p.end_time,
-  COUNT(DISTINCT t.id) as total_teams,
-  COUNT(DISTINCT pl.id) as total_players,
-  COUNT(DISTINCT m.id) as total_matches
-FROM periods p
-LEFT JOIN teams t ON t.period_id = p.id
-LEFT JOIN players pl ON pl.team_id = t.id
-LEFT JOIN matches m ON m.period_id = p.id
-WHERE p.is_active = true
-GROUP BY p.id, p.name, p.start_time, p.end_time;
-
--- Optional: Archive old periods (run manually or via cron)
--- DELETE FROM periods WHERE end_time < NOW() - INTERVAL '90 days';
+-- Create initial period if none exists
+INSERT INTO periods (name, start_time, is_active)
+SELECT 'Initial Period', NOW(), true
+WHERE NOT EXISTS (SELECT 1 FROM periods WHERE is_active = true);
