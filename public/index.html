@@ -52,12 +52,12 @@ th { background: #f9f9f9; }
     <div class="input-group">
       <label>Team 1:</label>
       <select id="team1"></select>
-      <input id="score1" type="number" value="0" min="0">
+      <input id="score1" type="number" min="0" placeholder="GF">
     </div>
     <div class="input-group">
       <label>Team 2:</label>
       <select id="team2"></select>
-      <input id="score2" type="number" value="0" min="0">
+      <input id="score2" type="number" min="0" placeholder="GA">
     </div>
     <button onclick="handleSubmit()">Submit Match</button>
     <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
@@ -73,11 +73,11 @@ th { background: #f9f9f9; }
     </div>
     <div class="input-group">
       <label>Goals ⚽:</label>
-      <input id="goals" type="number" value="0" min="0">
+      <input id="goals" type="number" min="0" placeholder="Goals">
     </div>
     <div class="input-group">
       <label>Assists 🎯:</label>
-      <input id="assists" type="number" value="0" min="0">
+      <input id="assists" type="number" min="0" placeholder="Assists">
     </div>
     <button onclick="addPlayerStats()">Add Stats</button>
   </div>
