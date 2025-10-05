@@ -395,7 +395,7 @@ function render() {
       if (totalB !== totalA) return totalB - totalA;
       if (b.goals !== a.goals) return b.goals - a.goals;
       if (b.assists !== a.assists) return b.assists - a.assists;
-      return nameA.localeCompare(nameB);
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
     });
 
   if (filteredPlayers.length === 0) {
@@ -425,7 +425,7 @@ function render() {
     if (totalB !== totalA) return totalB - totalA;
     if (b.goals !== a.goals) return b.goals - a.goals;
     if (b.assists !== a.assists) return b.assists - a.assists;
-    return nameA.localeCompare(nameB);
+    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
   });
   document.querySelector("#playerTable tbody").innerHTML =
     sortedPlayers.map(([name, p], idx) => {
