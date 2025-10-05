@@ -389,11 +389,13 @@ function render() {
   sel.innerHTML = "";
   const filteredPlayers = Object.entries(players)
     .filter(([, data]) => selectedTeams.size === 0 || selectedTeams.has(data.team))
-    .sort(([, a], [, b]) => {
+    .sort(([nameA, a], [nameB, b]) => {
       const totalA = a.goals + a.assists;
       const totalB = b.goals + b.assists;
       if (totalB !== totalA) return totalB - totalA;
-      return b.goals - a.goals;
+      if (b.goals !== a.goals) return b.goals - a.goals;
+      if (b.assists !== a.assists) return b.assists - a.assists;
+      return nameA.localeCompare(nameB);
     });
 
   if (filteredPlayers.length === 0) {
@@ -417,11 +419,13 @@ function render() {
   };
 
   // Player table - sorted
-  const sortedPlayers = Object.entries(players).sort(([, a], [, b]) => {
+  const sortedPlayers = Object.entries(players).sort(([nameA, a], [nameB, b]) => {
     const totalA = a.goals + a.assists;
     const totalB = b.goals + b.assists;
     if (totalB !== totalA) return totalB - totalA;
-    return b.goals - a.goals;
+    if (b.goals !== a.goals) return b.goals - a.goals;
+    if (b.assists !== a.assists) return b.assists - a.assists;
+    return nameA.localeCompare(nameB);
   });
   document.querySelector("#playerTable tbody").innerHTML =
     sortedPlayers.map(([name, p], idx) => {
