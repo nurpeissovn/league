@@ -68,6 +68,12 @@ th { background: #f9f9f9; }
   <h2>Add Player Statistics</h2>
   <div class="flex-row">
     <div class="input-group">
+      <label>Team:</label>
+      <select id="playerTeamFilter">
+        <option value="">-- Select team --</option>
+      </select>
+    </div>
+    <div class="input-group">
       <label>Player:</label>
       <select id="playerSelectInput"></select>
     </div>
@@ -120,7 +126,7 @@ const history = [];         // [{ id, t1, s1, t2, s2 }]
 let teamIdToName = {};      // { id: name }
 
 // remember user selections so dropdowns stay put
-let sticky = { team1: null, team2: null, player: null };
+let sticky = { team1: null, team2: null, playerTeam: null, player: null };
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -301,8 +307,8 @@ async function addPlayerStats() {
 
     player.goals = newGoals;
     player.assists = newAssists;
-    document.getElementById("goals").value = "0";
-    document.getElementById("assists").value = "0";
+    document.getElementById("goals").value = "";
+    document.getElementById("assists").value = "";
 
     render();
     fireworks("Done ✅");
@@ -342,9 +348,11 @@ function render() {
   // cache current UI choices first (in case called without setting sticky)
   const t1Sel = document.getElementById("team1");
   const t2Sel = document.getElementById("team2");
+  const teamFilter = document.getElementById("playerTeamFilter");
   const pSel  = document.getElementById("playerSelectInput");
   if (t1Sel) sticky.team1 = sticky.team1 ?? t1Sel.value ?? null;
   if (t2Sel) sticky.team2 = sticky.team2 ?? t2Sel.value ?? null;
+  if (teamFilter) sticky.playerTeam = sticky.playerTeam ?? (teamFilter.value || null);
   if (pSel)  sticky.player = sticky.player ?? pSel.value ?? null;
 
   // Teams dropdowns
@@ -361,12 +369,64 @@ function render() {
   if (sticky.team2 && teams[sticky.team2]) t2.value = sticky.team2;
 
   // Players dropdown
+  const teamFilterSelect = document.getElementById("playerTeamFilter");
   const sel = document.getElementById("playerSelectInput");
-  sel.innerHTML = "";
-  for (const p in players) {
-    sel.innerHTML += `<option value="${p}">${p} (${players[p].team})</option>`;
+
+  // populate team filter dropdown
+  const prevTeam = teamFilterSelect.value;
+  const teamNames = Object.keys(teams);
+  teamFilterSelect.innerHTML = '<option value="">-- Select team --</option>';
+  for (const t of teamNames) {
+    teamFilterSelect.innerHTML += `<option value="${t}">${t}</option>`;
   }
-  if (sticky.player && players[sticky.player]) sel.value = sticky.player;
+
+  const teamHasPlayers = (team) => Object.values(players).some(p => p.team === team);
+
+  let selectedTeam = sticky.playerTeam && teams[sticky.playerTeam] ? sticky.playerTeam : null;
+  if (!selectedTeam && prevTeam && teams[prevTeam]) {
+    selectedTeam = prevTeam;
+  }
+  if (!selectedTeam && teamNames.length > 0) {
+    selectedTeam = teamNames.find(teamHasPlayers) || teamNames[0];
+  }
+  sticky.playerTeam = selectedTeam;
+  teamFilterSelect.value = selectedTeam || "";
+
+  teamFilterSelect.onchange = () => {
+    sticky.playerTeam = teamFilterSelect.value || null;
+    sticky.player = null;
+    render();
+  };
+
+  sel.innerHTML = "";
+  const filteredPlayers = Object.entries(players)
+    .filter(([, data]) => !sticky.playerTeam || data.team === sticky.playerTeam)
+    .sort(([, a], [, b]) => {
+      const totalA = a.goals + a.assists;
+      const totalB = b.goals + b.assists;
+      if (totalB !== totalA) return totalB - totalA;
+      return b.goals - a.goals;
+    });
+
+  if (filteredPlayers.length === 0) {
+    sel.innerHTML = '<option value="">-- No players --</option>';
+    sel.disabled = true;
+    sticky.player = null;
+    sel.value = "";
+  } else {
+    sel.disabled = false;
+    for (const [name, data] of filteredPlayers) {
+      sel.innerHTML += `<option value="${name}">${name} (${data.team})</option>`;
+    }
+    if (!sticky.player || !filteredPlayers.find(([name]) => name === sticky.player)) {
+      sticky.player = filteredPlayers[0][0];
+    }
+    sel.value = sticky.player;
+  }
+
+  sel.onchange = () => {
+    sticky.player = sel.value || null;
+  };
 
   // Player table - sorted
   const sortedPlayers = Object.entries(players).sort(([, a], [, b]) => {
