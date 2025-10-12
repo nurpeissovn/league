@@ -589,30 +589,37 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	type playerSnapshot struct {
+		id      int
+		goals   int
+		assists int
+	}
+	var playersToSnapshot []playerSnapshot
+
 	for rows.Next() {
-		var (
-			id      int
-			goals   int
-			assists int
-		)
-		if err := rows.Scan(&id, &goals, &assists); err != nil {
+		var p playerSnapshot
+		if err := rows.Scan(&p.id, &p.goals, &p.assists); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		points := goals + assists
+		playersToSnapshot = append(playersToSnapshot, p)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for _, p := range playersToSnapshot {
+		points := p.goals + p.assists
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (player_id, snapshot_date)
 			DO UPDATE SET goals = EXCLUDED.goals, assists = EXCLUDED.assists, points = EXCLUDED.points
-		`, id, snapshotDate, goals, assists, points); err != nil {
+		`, p.id, snapshotDate, p.goals, p.assists, points); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	}
-	if err := rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE players SET goals = 0, assists = 0`); err != nil {
