@@ -126,7 +126,7 @@
           const goals = Number(stat.goals || 0);
           const assists = Number(stat.assists || 0);
           const points = Number(stat.points || goals + assists);
-          return `<td class="py-3 px-4" title="Goals: ${goals}, Assists: ${assists}">${goals}+${assists}=${points}</td>`;
+          return `<td class="py-3 px-4" title="Goals: ${goals}, Assists: ${assists}">${points}</td>`;
         }).join('');
 
         return `
