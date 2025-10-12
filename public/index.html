@@ -9,12 +9,54 @@ body { font-family: Arial; background: #f0f4ff; padding: 20px; position: relativ
 h1 { text-align: center; }
 .card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); max-width: 100%; overflow-x: auto; box-sizing: border-box; }
 input, select { padding: 5px; margin: 5px; }
-button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer;}
+button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; background: #2563eb; color:white; cursor:pointer; transition: background 0.2s ease; }
 button:hover { background: #1e40af; }
-.btn-danger { background:#dc2626; }
-.btn-danger:hover { background:#b91c1c; }
-.btn-secondary { background:#4b5563; }
-.btn-secondary:hover { background:#374151; }
+.btn-base {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 18px;
+    border-radius: 9999px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.btn-base:hover { transform: translateY(-2px); }
+.btn-base span.icon {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    background: rgba(255,255,255,0.2);
+    font-size: 0.9rem;
+}
+.btn-primary {
+    background: linear-gradient(135deg, #2563eb, #22d3ee);
+    color: #ffffff;
+    box-shadow: 0 12px 22px rgba(37, 99, 235, 0.28);
+}
+.btn-primary:hover { box-shadow: 0 16px 26px rgba(37, 99, 235, 0.4); }
+.btn-danger {
+    background: linear-gradient(135deg, #ef4444, #f97316);
+    color: #ffffff;
+    box-shadow: 0 12px 22px rgba(239, 68, 68, 0.28);
+}
+.btn-danger:hover { box-shadow: 0 16px 26px rgba(239, 68, 68, 0.4); }
+.btn-secondary {
+    background: linear-gradient(135deg, #0ea5e9, #6366f1);
+    color: #ffffff;
+    box-shadow: 0 12px 22px rgba(99, 102, 241, 0.25);
+}
+.btn-secondary:hover { box-shadow: 0 16px 26px rgba(99, 102, 241, 0.35); }
+.btn-neutral {
+    background: linear-gradient(135deg, #f97316, #facc15);
+    color: #1f2937;
+    box-shadow: 0 12px 22px rgba(250, 204, 21, 0.35);
+}
+.btn-neutral:hover { box-shadow: 0 16px 26px rgba(250, 204, 21, 0.45); }
 table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
 th, td { border: 1px solid #ddd; padding: 6px; text-align: center; word-break: break-word; }
 th { background: #f9f9f9; }
@@ -44,7 +86,6 @@ th { background: #f9f9f9; }
 .tables-container .card { flex: 1; min-width: 300px; }
 .flex-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .score-group { align-items: flex-start; }
-.score-group label { margin-bottom: 6px; display: block; }
 .score-picker {
     display: flex;
     gap: 10px;
@@ -136,17 +177,6 @@ th { background: #f9f9f9; }
     cursor: pointer;
 }
 .modal-close:hover { color: #1f2937; }
-.btn-secondary { background:#4b5563; }
-.btn-secondary:hover { background:#374151; }
-.btn-outline {
-    background: transparent;
-    color: #1f2937;
-    border: 1px solid #d1d5db;
-}
-.btn-outline:hover {
-    background: #e5e7eb;
-    color: #111827;
-}
 .btn-highlight {
     display: inline-flex;
     align-items: center;
@@ -254,7 +284,6 @@ th { background: #f9f9f9; }
   <h2>Enter Match Result</h2>
   <div class="flex-row">
     <div class="input-group score-group">
-      <label>Team 1:</label>
       <select id="team1"></select>
       <div class="score-picker" data-target="score1">
         <button type="button" class="score-option" data-value="0">0</button>
@@ -264,7 +293,6 @@ th { background: #f9f9f9; }
       <input id="score1" type="hidden" value="">
     </div>
     <div class="input-group score-group">
-      <label>Team 2:</label>
       <select id="team2"></select>
       <div class="score-picker" data-target="score2">
         <button type="button" class="score-option" data-value="0">0</button>
@@ -273,10 +301,10 @@ th { background: #f9f9f9; }
       </div>
       <input id="score2" type="hidden" value="">
     </div>
-    <button onclick="handleSubmit()">Submit Match</button>
-    <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
-    <button id="resetButton" class="btn-secondary" onclick="openResetModal()">Reset dashboard</button>
-    <button id="toggleAutoSuggest" class="btn-secondary" onclick="toggleAutoSuggest()">Auto-suggest: on</button>
+    <button class="btn-base btn-primary" onclick="handleSubmit()"><span class="icon">🚀</span>Submit Match</button>
+    <button class="btn-base btn-danger" onclick="undoLastMatch()"><span class="icon">↩</span>Undo last match</button>
+    <button id="resetButton" class="btn-base btn-secondary" onclick="openResetModal()"><span class="icon">📅</span>Save snapshot</button>
+    <button id="toggleAutoSuggest" class="btn-base btn-neutral" onclick="toggleAutoSuggest()"><span class="icon">✨</span>Auto-suggest: on</button>
   </div>
 </div>
   
@@ -339,7 +367,7 @@ th { background: #f9f9f9; }
       <div id="playerSelectionList" class="player-list"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" type="button" onclick="closeStatsModal()">Cancel</button>
+      <button class="btn-base btn-neutral" type="button" onclick="closeStatsModal()"><span class="icon">✖</span>Cancel</button>
       <button id="modalSaveButton" type="button" onclick="submitStatsFromModal()">Save Stats</button>
     </div>
   </div>
@@ -355,8 +383,8 @@ th { background: #f9f9f9; }
       <input id="snapshotDateInput" type="date">
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" type="button" onclick="closeResetModal()">Cancel</button>
-      <button type="button" onclick="confirmResetFromModal()">Save Snapshot</button>
+      <button class="btn-base btn-neutral" type="button" onclick="closeResetModal()"><span class="icon">✖</span>Cancel</button>
+      <button class="btn-base btn-secondary" type="button" onclick="confirmResetFromModal()"><span class="icon">💾</span>Save Snapshot</button>
     </div>
   </div>
 </div>
@@ -1093,7 +1121,7 @@ function disableAutoSuggest() {
 function updateAutoSuggestButton() {
   const btn = document.getElementById("toggleAutoSuggest");
   if (!btn) return;
-  btn.textContent = `Auto-suggest: ${autoSuggestEnabled ? 'on' : 'off'}`;
+  btn.innerHTML = `<span class="icon">✨</span>Auto-suggest: ${autoSuggestEnabled ? 'on' : 'off'}`;
 }
 
 const statsOverlay = document.getElementById("statsOverlay");
