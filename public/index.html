@@ -136,6 +136,7 @@ let sticky = { team1: null, team2: null, player: null };
 
 let loadPromise = null;
 let nextMatchSuggestion = null;
+let autoSuggestEnabled = true;
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
