@@ -43,6 +43,44 @@ th { background: #f9f9f9; }
 .tables-container { display: flex; gap: 20px; flex-wrap: wrap; }
 .tables-container .card { flex: 1; min-width: 300px; }
 .flex-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.score-group { align-items: flex-start; }
+.score-group label { margin-bottom: 6px; display: block; }
+.score-picker {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+.score-option {
+    background: #e2e8f0;
+    border: none;
+    border-radius: 12px;
+    width: 44px;
+    height: 44px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #1f2937;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    box-shadow: 0 4px 8px rgba(15,23,42,0.12);
+}
+.score-option:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px rgba(30,64,175,0.2);
+}
+.score-option.selected {
+    background: linear-gradient(135deg, #6366f1, #22d3ee);
+    color: #ffffff;
+    box-shadow: 0 8px 16px rgba(79, 70, 229, 0.35);
+}
+.score-option.pop {
+    animation: score-pop 0.25s ease;
+}
+@keyframes score-pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+}
 .hidden { display: none !important; }
 .modal-overlay {
     position: fixed;
@@ -215,15 +253,25 @@ th { background: #f9f9f9; }
 <div class="card">
   <h2>Enter Match Result</h2>
   <div class="flex-row">
-    <div class="input-group">
+    <div class="input-group score-group">
       <label>Team 1:</label>
       <select id="team1"></select>
-      <input id="score1" type="number" min="0" placeholder="GF">
+      <div class="score-picker" data-target="score1">
+        <button type="button" class="score-option" data-value="0">0</button>
+        <button type="button" class="score-option" data-value="1">1</button>
+        <button type="button" class="score-option" data-value="2">2</button>
+      </div>
+      <input id="score1" type="hidden" value="">
     </div>
-    <div class="input-group">
+    <div class="input-group score-group">
       <label>Team 2:</label>
       <select id="team2"></select>
-      <input id="score2" type="number" min="0" placeholder="GA">
+      <div class="score-picker" data-target="score2">
+        <button type="button" class="score-option" data-value="0">0</button>
+        <button type="button" class="score-option" data-value="1">1</button>
+        <button type="button" class="score-option" data-value="2">2</button>
+      </div>
+      <input id="score2" type="hidden" value="">
     </div>
     <button onclick="handleSubmit()">Submit Match</button>
     <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
@@ -769,6 +817,37 @@ function updateSelectionSummary() {
   }
 }
 
+function initScorePickers() {
+  document.querySelectorAll('.score-picker').forEach(picker => {
+    const targetId = picker.dataset.target;
+    const input = document.getElementById(targetId);
+    picker.querySelectorAll('.score-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const value = btn.dataset.value;
+        if (input) {
+          input.value = value;
+        }
+        picker.querySelectorAll('.score-option').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        btn.classList.add('pop');
+        setTimeout(() => btn.classList.remove('pop'), 220);
+      });
+    });
+  });
+  syncScorePickers();
+}
+
+function syncScorePickers() {
+  document.querySelectorAll('.score-picker').forEach(picker => {
+    const targetId = picker.dataset.target;
+    const input = document.getElementById(targetId);
+    const currentValue = input ? input.value : "";
+    picker.querySelectorAll('.score-option').forEach(btn => {
+      btn.classList.toggle('selected', currentValue !== "" && btn.dataset.value === currentValue);
+    });
+  });
+}
+
 function fireworks(text = "") {
   const centerX = window.innerWidth / 2;
   const centerY = 150;
@@ -885,6 +964,7 @@ function render() {
     history.map((m, i) => `<tr><td>${i+1}</td><td>${m.t1} vs ${m.t2}</td><td>${m.t1} ${m.s1} - ${m.s2} ${m.t2}</td></tr>`).join("");
 
   applyNextMatchSuggestion();
+  syncScorePickers();
 }
 
 function suggestNextMatch(teamRecords, matchHistory) {
@@ -1043,6 +1123,7 @@ document.addEventListener('keydown', (event) => {
 
 // Load all data on page load
 updateAutoSuggestButton();
+initScorePickers();
 loadAllData();
 </script>
 </body>
