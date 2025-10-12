@@ -72,6 +72,7 @@ th { background: #f9f9f9; }
     <button onclick="handleSubmit()">Submit Match</button>
     <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
     <button id="resetButton" class="btn-secondary" onclick="resetDashboard()">Reset dashboard</button>
+    <button id="toggleAutoSuggest" class="btn-secondary" onclick="toggleAutoSuggest()">Auto-suggest: on</button>
   </div>
 </div>
   
@@ -154,6 +155,8 @@ function clearState() {
   teamIdToName = {};
   sticky = { team1: null, team2: null, player: null };
   nextMatchSuggestion = null;
+  autoSuggestEnabled = true;
+  updateAutoSuggestButton();
 
   ["score1", "score2", "goals", "assists"].forEach(id => {
     const input = document.getElementById(id);
@@ -206,7 +209,7 @@ async function loadAllData(options = {}) {
       } catch {}
 
       nextMatchSuggestion = suggestNextMatch(teams, history);
-      if (nextMatchSuggestion) {
+      if (autoSuggestEnabled && nextMatchSuggestion) {
         sticky.team1 = nextMatchSuggestion.team1;
         sticky.team2 = nextMatchSuggestion.team2;
         sticky.player = null;
@@ -327,7 +330,7 @@ async function handleSubmit() {
     history.push({ id: data.id, t1, s1, t2, s2 });
 
     nextMatchSuggestion = suggestNextMatch(teams, history);
-    if (nextMatchSuggestion) {
+    if (autoSuggestEnabled && nextMatchSuggestion) {
       sticky.team1 = nextMatchSuggestion.team1;
       sticky.team2 = nextMatchSuggestion.team2;
     }
@@ -367,7 +370,7 @@ async function undoLastMatch() {
     sticky.player = pSel.value   || sticky.player;
 
     nextMatchSuggestion = suggestNextMatch(teams, history);
-    if (nextMatchSuggestion) {
+    if (autoSuggestEnabled && nextMatchSuggestion) {
       sticky.team1 = nextMatchSuggestion.team1;
       sticky.team2 = nextMatchSuggestion.team2;
     }
@@ -474,11 +477,13 @@ function render() {
   t1.onchange = () => {
     sticky.team1 = t1.value || null;
     sticky.player = null;
+    disableAutoSuggest();
     render();
   };
   t2.onchange = () => {
     sticky.team2 = t2.value || null;
     sticky.player = null;
+    disableAutoSuggest();
     render();
   };
 
@@ -643,6 +648,7 @@ function suggestNextMatch(teamRecords, matchHistory) {
 
 function applyNextMatchSuggestion() {
   if (!nextMatchSuggestion) return;
+  if (!autoSuggestEnabled) return;
   const { team1, team2 } = nextMatchSuggestion;
   if (!team1 || !team2 || team1 === team2) return;
 
@@ -660,7 +666,31 @@ function applyNextMatchSuggestion() {
   sticky.team2 = team2;
 }
 
+function toggleAutoSuggest() {
+  autoSuggestEnabled = !autoSuggestEnabled;
+  updateAutoSuggestButton();
+  if (autoSuggestEnabled) {
+    if (!nextMatchSuggestion) {
+      nextMatchSuggestion = suggestNextMatch(teams, history);
+    }
+    applyNextMatchSuggestion();
+  }
+}
+
+function disableAutoSuggest() {
+  if (!autoSuggestEnabled) return;
+  autoSuggestEnabled = false;
+  updateAutoSuggestButton();
+}
+
+function updateAutoSuggestButton() {
+  const btn = document.getElementById("toggleAutoSuggest");
+  if (!btn) return;
+  btn.textContent = `Auto-suggest: ${autoSuggestEnabled ? 'on' : 'off'}`;
+}
+
 // Load all data on page load
+updateAutoSuggestButton();
 loadAllData();
 </script>
 </body>
