@@ -84,8 +84,8 @@ th { background: #f9f9f9; }
     font-size: 0.95rem;
 }
 .modal input:focus, .modal select:focus { outline: 2px solid #6366f1; border-color: transparent; }
-.modal .field-inline { display: flex; gap: 12px; }
-.modal .field-inline .field { flex: 1; margin-bottom: 0; }
+.modal .field-inline { display: flex; gap: 12px; flex-wrap: wrap; }
+.modal .field-inline .field { flex: 1; min-width: 140px; margin-bottom: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .modal-close {
     position: absolute;
@@ -109,6 +109,31 @@ th { background: #f9f9f9; }
     background: #e5e7eb;
     color: #111827;
 }
+.player-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-bottom: 18px;
+    padding-right: 4px;
+}
+.player-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: #f8fafc;
+    cursor: pointer;
+    transition: background 0.2s ease, border 0.2s ease, transform 0.15s ease;
+    font-size: 0.95rem;
+}
+.player-card span:first-child { font-weight: 600; color: #1f2937; }
+.player-card span:last-child { color: #64748b; font-size: 0.85rem; margin-left: 12px; }
+.player-card:hover { background: #eef2ff; border-color: #6366f1; transform: translateY(-1px); }
+.player-card.active { background: #e0e7ff; border-color: #4338ca; color: #312e81; }
 
 @media (max-width: 640px) {
   body { padding: 12px; }
@@ -116,6 +141,10 @@ th { background: #f9f9f9; }
   .card { padding: 12px; }
   th, td { padding: 4px; font-size: 12px; }
   h2 { font-size: 1.1rem; }
+  .flex-row { flex-direction: column; align-items: stretch; }
+  button { margin-left: 0; width: 100%; }
+  .modal { padding: 18px; width: 92%; }
+  .modal .field-inline { flex-direction: column; }
 }
 </style>
 </head>
@@ -184,8 +213,8 @@ th { background: #f9f9f9; }
     <h3 id="statsModalTitle">Record Player Stats</h3>
     <p class="subtle">Select a player and add their contribution for the current match.</p>
     <div class="field">
-      <label for="modalPlayerSelect">Player</label>
-      <select id="modalPlayerSelect"></select>
+      <label>Choose Player</label>
+      <div id="modalPlayerList" class="player-list"></div>
     </div>
     <div class="field-inline">
       <div class="field">
@@ -217,6 +246,7 @@ let loadPromise = null;
 let nextMatchSuggestion = null;
 let autoSuggestEnabled = true;
 let currentPlayerPool = [];
+let modalSelectedPlayer = null;
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -519,45 +549,52 @@ function openStatsModal() {
   }
 
   const overlay = document.getElementById("statsOverlay");
-  const select = document.getElementById("modalPlayerSelect");
+  const list = document.getElementById("modalPlayerList");
   const goalsInput = document.getElementById("modalGoals");
   const assistsInput = document.getElementById("modalAssists");
 
-  select.innerHTML = "";
-  currentPlayerPool.forEach(({ name, team }) => {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = team ? `${name} (${team})` : name;
-    select.appendChild(option);
-  });
-
+  list.innerHTML = "";
   const defaultPlayer = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
     ? sticky.player
     : currentPlayerPool[0]?.name;
-  if (defaultPlayer) {
-    select.value = defaultPlayer;
-    sticky.player = defaultPlayer;
-  }
+  modalSelectedPlayer = defaultPlayer || null;
+
+  currentPlayerPool.forEach(({ name, team }) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "player-card" + (name === modalSelectedPlayer ? " active" : "");
+    card.dataset.player = name;
+    card.innerHTML = `<span>${name}</span><span>${team || ''}</span>`;
+    card.addEventListener('click', () => {
+      modalSelectedPlayer = name;
+      sticky.player = name;
+      updateModalPlayerCards();
+    });
+    list.appendChild(card);
+  });
+
+  updateModalPlayerCards();
 
   goalsInput.value = 0;
   assistsInput.value = 0;
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
-  select.focus();
+  const firstCard = list.querySelector('.player-card');
+  if (firstCard) firstCard.focus();
 }
 
 function closeStatsModal() {
   const overlay = document.getElementById("statsOverlay");
   overlay.classList.add("hidden");
   overlay.setAttribute("aria-hidden", "true");
+  modalSelectedPlayer = null;
 }
 
 async function submitStatsFromModal() {
-  const select = document.getElementById("modalPlayerSelect");
   const goalsInput = document.getElementById("modalGoals");
   const assistsInput = document.getElementById("modalAssists");
 
-  const playerName = select.value;
+  const playerName = modalSelectedPlayer;
   const goals = parseInt(goalsInput.value, 10) || 0;
   const assists = parseInt(assistsInput.value, 10) || 0;
 
@@ -567,6 +604,18 @@ async function submitStatsFromModal() {
     goalsInput.value = 0;
     assistsInput.value = 0;
   }
+}
+
+function updateModalPlayerCards() {
+  const list = document.getElementById("modalPlayerList");
+  if (!list) return;
+  Array.from(list.querySelectorAll('.player-card')).forEach(card => {
+    if (card.dataset.player === modalSelectedPlayer) {
+      card.classList.add('active');
+    } else {
+      card.classList.remove('active');
+    }
+  });
 }
 
 function fireworks(text = "") {
