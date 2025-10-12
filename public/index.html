@@ -621,11 +621,9 @@ function openStatsModal() {
     modalSelectedAssist = null;
     updateSelectionSummary();
   } else {
-    if (saveButton) saveButton.disabled = false;
-    modalSelectedGoal = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
-      ? sticky.player
-      : currentPlayerPool[0]?.name || null;
+    modalSelectedGoal = null;
     modalSelectedAssist = null;
+    if (saveButton) saveButton.disabled = true;
 
     currentPlayerPool.forEach(({ name, team }) => {
       const card = document.createElement("button");
