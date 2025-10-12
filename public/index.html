@@ -43,6 +43,72 @@ th { background: #f9f9f9; }
 .tables-container { display: flex; gap: 20px; flex-wrap: wrap; }
 .tables-container .card { flex: 1; min-width: 300px; }
 .flex-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.hidden { display: none; }
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    width: 360px;
+    max-width: calc(100% - 32px);
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.24);
+    position: relative;
+    animation: fadein 0.25s ease;
+}
+.modal h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 1.3rem;
+    color: #1e3a8a;
+}
+.modal p.subtle {
+    margin-top: 0;
+    margin-bottom: 16px;
+    color: #4b5563;
+    font-size: 0.95rem;
+}
+.modal .field { margin-bottom: 14px; display: flex; flex-direction: column; }
+.modal label { font-weight: 600; color: #1f2937; margin-bottom: 4px; }
+.modal input, .modal select {
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #cbd5f5;
+    font-size: 0.95rem;
+}
+.modal input:focus, .modal select:focus { outline: 2px solid #6366f1; border-color: transparent; }
+.modal .field-inline { display: flex; gap: 12px; }
+.modal .field-inline .field { flex: 1; margin-bottom: 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.modal-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background: transparent;
+    border: none;
+    font-size: 1.25rem;
+    color: #6b7280;
+    cursor: pointer;
+}
+.modal-close:hover { color: #1f2937; }
+.btn-secondary { background:#4b5563; }
+.btn-secondary:hover { background:#374151; }
+.btn-outline {
+    background: transparent;
+    color: #1f2937;
+    border: 1px solid #d1d5db;
+}
+.btn-outline:hover {
+    background: #e5e7eb;
+    color: #111827;
+}
 
 @media (max-width: 640px) {
   body { padding: 12px; }
@@ -77,22 +143,9 @@ th { background: #f9f9f9; }
 </div>
   
 <div class="card">
-  <h2>Add Player Statistics</h2>
-  <div class="flex-row">
-    <div class="input-group">
-      <label>Player:</label>
-      <select id="playerSelectInput"></select>
-    </div>
-    <div class="input-group">
-      <label>Goals ⚽:</label>
-      <input id="goals" type="number" min="0" placeholder="Goals">
-    </div>
-    <div class="input-group">
-      <label>Assists 🎯:</label>
-      <input id="assists" type="number" min="0" placeholder="Assists">
-    </div>
-    <button onclick="addPlayerStats()">Add Stats</button>
-  </div>
+  <h2>Player Statistics</h2>
+  <p style="margin: 0 0 12px; color:#4b5563;">Quickly capture goals and assists for players currently on the pitch.</p>
+  <button class="btn-outline" onclick="openStatsModal()">Record Player Stats</button>
 </div>
 
 <div class="tables-container">
@@ -125,6 +178,32 @@ th { background: #f9f9f9; }
   </table>
 </div>
 
+<div id="statsOverlay" class="modal-overlay hidden" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="statsModalTitle">
+    <button class="modal-close" type="button" aria-label="Close" onclick="closeStatsModal()">&times;</button>
+    <h3 id="statsModalTitle">Record Player Stats</h3>
+    <p class="subtle">Select a player and add their contribution for the current match.</p>
+    <div class="field">
+      <label for="modalPlayerSelect">Player</label>
+      <select id="modalPlayerSelect"></select>
+    </div>
+    <div class="field-inline">
+      <div class="field">
+        <label for="modalGoals">Goals ⚽</label>
+        <input id="modalGoals" type="number" min="0" value="0">
+      </div>
+      <div class="field">
+        <label for="modalAssists">Assists 🎯</label>
+        <input id="modalAssists" type="number" min="0" value="0">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" type="button" onclick="closeStatsModal()">Cancel</button>
+      <button type="button" onclick="submitStatsFromModal()">Save Stats</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const teams = {};           // { teamName: { id, P,W,D,L,GF,GA,GD,Pts } }
 const players = {};         // { playerName: { team, teamId, goals, assists } }
@@ -137,6 +216,7 @@ let sticky = { team1: null, team2: null, player: null };
 let loadPromise = null;
 let nextMatchSuggestion = null;
 let autoSuggestEnabled = true;
+let currentPlayerPool = [];
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -158,8 +238,9 @@ function clearState() {
   nextMatchSuggestion = null;
   autoSuggestEnabled = true;
   updateAutoSuggestButton();
+  currentPlayerPool = [];
 
-  ["score1", "score2", "goals", "assists"].forEach(id => {
+  ["score1", "score2"].forEach(id => {
     const input = document.getElementById(id);
     if (input) input.value = "";
   });
@@ -288,7 +369,6 @@ function applyMatchToTables(t1, s1, t2, s2, dir) {
 async function handleSubmit() {
   const t1Sel = document.getElementById("team1");
   const t2Sel = document.getElementById("team2");
-  const pSel  = document.getElementById("playerSelectInput");
 
   const t1 = t1Sel.value;
   const t2 = t2Sel.value;
@@ -310,7 +390,6 @@ async function handleSubmit() {
   // remember current choices so they stick after render
   sticky.team1 = t1;
   sticky.team2 = t2;
-  sticky.player = pSel.value || null;
 
   try {
     const res = await fetch("/api/add-match", {
@@ -365,10 +444,8 @@ async function undoLastMatch() {
     // keep current dropdown selections
     const t1Sel = document.getElementById("team1");
     const t2Sel = document.getElementById("team2");
-    const pSel  = document.getElementById("playerSelectInput");
     sticky.team1 = t1Sel.value || sticky.team1;
     sticky.team2 = t2Sel.value || sticky.team2;
-    sticky.player = pSel.value   || sticky.player;
 
     nextMatchSuggestion = suggestNextMatch(teams, history);
     if (autoSuggestEnabled && nextMatchSuggestion) {
@@ -384,19 +461,25 @@ async function undoLastMatch() {
   }
 }
 
-async function addPlayerStats() {
-  const playerName = document.getElementById("playerSelectInput").value;
-  const goals = parseInt(document.getElementById("goals").value) || 0;
-  const assists = parseInt(document.getElementById("assists").value) || 0;
+async function recordPlayerStats(playerName, goalsDelta, assistsDelta) {
+  if (!playerName) {
+    alert("Please choose a player");
+    return false;
+  }
 
-  if (!playerName) return alert("Please select a player");
-
-  // remember player selection
-  sticky.player = playerName;
+  if (goalsDelta < 0 || assistsDelta < 0) {
+    alert("Goals and assists cannot be negative");
+    return false;
+  }
 
   const player = players[playerName];
-  const newGoals = player.goals + goals;
-  const newAssists = player.assists + assists;
+  if (!player) {
+    alert("Player not found. Make sure they are registered.");
+    return false;
+  }
+
+  const newGoals = player.goals + goalsDelta;
+  const newAssists = player.assists + assistsDelta;
 
   try {
     const res = await fetch("/api/add-player", {
@@ -409,18 +492,80 @@ async function addPlayerStats() {
         assists: newAssists
       })
     });
-    if (!res.ok) return alert("Failed to update player stats");
+    if (!res.ok) {
+      const msg = await res.text();
+      alert(msg || "Failed to update player stats");
+      return false;
+    }
 
     player.goals = newGoals;
     player.assists = newAssists;
-    document.getElementById("goals").value = "";
-    document.getElementById("assists").value = "";
+    sticky.player = playerName;
 
     render();
     fireworks("Done ✅");
+    return true;
   } catch (e) {
     console.error(e);
     alert("Network error while updating player stats");
+    return false;
+  }
+}
+
+function openStatsModal() {
+  if (!currentPlayerPool.length) {
+    alert("No players available. Add teams and players first or select teams above.");
+    return;
+  }
+
+  const overlay = document.getElementById("statsOverlay");
+  const select = document.getElementById("modalPlayerSelect");
+  const goalsInput = document.getElementById("modalGoals");
+  const assistsInput = document.getElementById("modalAssists");
+
+  select.innerHTML = "";
+  currentPlayerPool.forEach(({ name, team }) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = team ? `${name} (${team})` : name;
+    select.appendChild(option);
+  });
+
+  const defaultPlayer = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
+    ? sticky.player
+    : currentPlayerPool[0]?.name;
+  if (defaultPlayer) {
+    select.value = defaultPlayer;
+    sticky.player = defaultPlayer;
+  }
+
+  goalsInput.value = 0;
+  assistsInput.value = 0;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  select.focus();
+}
+
+function closeStatsModal() {
+  const overlay = document.getElementById("statsOverlay");
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+}
+
+async function submitStatsFromModal() {
+  const select = document.getElementById("modalPlayerSelect");
+  const goalsInput = document.getElementById("modalGoals");
+  const assistsInput = document.getElementById("modalAssists");
+
+  const playerName = select.value;
+  const goals = parseInt(goalsInput.value, 10) || 0;
+  const assists = parseInt(assistsInput.value, 10) || 0;
+
+  const success = await recordPlayerStats(playerName, goals, assists);
+  if (success) {
+    closeStatsModal();
+    goalsInput.value = 0;
+    assistsInput.value = 0;
   }
 }
 
@@ -454,10 +599,17 @@ function render() {
   // cache current UI choices first (in case called without setting sticky)
   const t1Sel = document.getElementById("team1");
   const t2Sel = document.getElementById("team2");
-  const pSel  = document.getElementById("playerSelectInput");
   if (t1Sel) sticky.team1 = sticky.team1 ?? t1Sel.value ?? null;
   if (t2Sel) sticky.team2 = sticky.team2 ?? t2Sel.value ?? null;
-  if (pSel)  sticky.player = sticky.player ?? pSel.value ?? null;
+
+  const playerSort = ([nameA, a], [nameB, b]) => {
+    const totalA = a.goals + a.assists;
+    const totalB = b.goals + b.assists;
+    if (totalB !== totalA) return totalB - totalA;
+    if (b.goals !== a.goals) return b.goals - a.goals;
+    if (b.assists !== a.assists) return b.assists - a.assists;
+    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+  };
 
   // Teams dropdowns
   const t1 = document.getElementById("team1");
@@ -471,9 +623,6 @@ function render() {
   // restore selections if still valid
   if (sticky.team1 && teams[sticky.team1]) t1.value = sticky.team1;
   if (sticky.team2 && teams[sticky.team2]) t2.value = sticky.team2;
-
-  // Players dropdown driven by selected teams
-  const sel = document.getElementById("playerSelectInput");
 
   t1.onchange = () => {
     sticky.team1 = t1.value || null;
@@ -492,47 +641,24 @@ function render() {
   if (t1.value) selectedTeams.add(t1.value);
   if (t2.value) selectedTeams.add(t2.value);
 
-  sel.innerHTML = "";
   const filteredPlayers = Object.entries(players)
     .filter(([, data]) => selectedTeams.size === 0 || selectedTeams.has(data.team))
-    .sort(([nameA, a], [nameB, b]) => {
-      const totalA = a.goals + a.assists;
-      const totalB = b.goals + b.assists;
-      if (totalB !== totalA) return totalB - totalA;
-      if (b.goals !== a.goals) return b.goals - a.goals;
-      if (b.assists !== a.assists) return b.assists - a.assists;
-      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
-    });
+    .sort(playerSort);
 
-  if (filteredPlayers.length === 0) {
-    sel.innerHTML = '<option value="">-- No players --</option>';
-    sel.disabled = true;
-    sticky.player = null;
-    sel.value = "";
-  } else {
-    sel.disabled = false;
-    for (const [name, data] of filteredPlayers) {
-      sel.innerHTML += `<option value="${name}">${name} (${data.team})</option>`;
-    }
-    if (!sticky.player || !filteredPlayers.find(([name]) => name === sticky.player)) {
-      sticky.player = filteredPlayers[0][0];
-    }
-    sel.value = sticky.player;
+  currentPlayerPool = filteredPlayers.map(([name, data]) => ({ name, team: data.team }));
+
+  if (!currentPlayerPool.length) {
+    currentPlayerPool = Object.entries(players)
+      .sort(playerSort)
+      .map(([name, data]) => ({ name, team: data.team }));
   }
 
-  sel.onchange = () => {
-    sticky.player = sel.value || null;
-  };
+  if (currentPlayerPool.length && (!sticky.player || !currentPlayerPool.some(p => p.name === sticky.player))) {
+    sticky.player = currentPlayerPool[0].name;
+  }
 
   // Player table - sorted
-  const sortedPlayers = Object.entries(players).sort(([nameA, a], [nameB, b]) => {
-    const totalA = a.goals + a.assists;
-    const totalB = b.goals + b.assists;
-    if (totalB !== totalA) return totalB - totalA;
-    if (b.goals !== a.goals) return b.goals - a.goals;
-    if (b.assists !== a.assists) return b.assists - a.assists;
-    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
-  });
+  const sortedPlayers = Object.entries(players).sort(playerSort);
   document.querySelector("#playerTable tbody").innerHTML =
     sortedPlayers.map(([name, p], idx) => {
       const total = p.goals + p.assists;
@@ -689,6 +815,21 @@ function updateAutoSuggestButton() {
   if (!btn) return;
   btn.textContent = `Auto-suggest: ${autoSuggestEnabled ? 'on' : 'off'}`;
 }
+
+const statsOverlay = document.getElementById("statsOverlay");
+if (statsOverlay) {
+  statsOverlay.addEventListener('click', (event) => {
+    if (event.target === statsOverlay) {
+      closeStatsModal();
+    }
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeStatsModal();
+  }
+});
 
 // Load all data on page load
 updateAutoSuggestButton();
