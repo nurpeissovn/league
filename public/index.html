@@ -13,6 +13,8 @@ button { padding: 6px 12px; margin-left: 5px; border-radius: 6px; border: none; 
 button:hover { background: #1e40af; }
 .btn-danger { background:#dc2626; }
 .btn-danger:hover { background:#b91c1c; }
+.btn-secondary { background:#4b5563; }
+.btn-secondary:hover { background:#374151; }
 table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
 th, td { border: 1px solid #ddd; padding: 6px; text-align: center; word-break: break-word; }
 th { background: #f9f9f9; }
@@ -69,6 +71,7 @@ th { background: #f9f9f9; }
     </div>
     <button onclick="handleSubmit()">Submit Match</button>
     <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
+    <button id="resetButton" class="btn-secondary" onclick="resetDashboard()">Reset dashboard</button>
   </div>
 </div>
   
@@ -130,6 +133,8 @@ let teamIdToName = {};      // { id: name }
 // remember user selections so dropdowns stay put
 let sticky = { team1: null, team2: null, player: null };
 
+let loadPromise = null;
+
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
     try {
@@ -141,46 +146,95 @@ async function fetchWithRetry(url, retries = 3, delay = 1000) {
   throw new Error(`Failed to fetch ${url} after ${retries} attempts`);
 }
 
-async function loadAllData() {
-  try {
-    const resTeams = await fetchWithRetry("/api/list-teams");
-    const dbTeams = await resTeams.json(); // [{id, name}]
-    for (const t of dbTeams) {
-      teams[t.name] = { id: t.id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
-      teamIdToName[t.id] = t.name;
+function clearState() {
+  for (const key in teams) delete teams[key];
+  for (const key in players) delete players[key];
+  history.length = 0;
+  teamIdToName = {};
+  sticky = { team1: null, team2: null, player: null };
+
+  ["score1", "score2", "goals", "assists"].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) input.value = "";
+  });
+}
+
+async function loadAllData(options = {}) {
+  if (loadPromise) {
+    return loadPromise;
+  }
+  const { showInterim = false } = options;
+
+  loadPromise = (async () => {
+    clearState();
+    if (showInterim) render();
+
+    try {
+      const resTeams = await fetchWithRetry("/api/list-teams");
+      const dbTeams = await resTeams.json(); // [{id, name}]
+      for (const t of dbTeams) {
+        teams[t.name] = { id: t.id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
+        teamIdToName[t.id] = t.name;
+      }
+
+      try {
+        const resP = await fetchWithRetry("/api/players");
+        const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
+        for (const p of dbPlayers) {
+          const teamName = teamIdToName[p.team_id] || "Unknown";
+          if (!teams[teamName]) teams[teamName] = { id: p.team_id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
+          players[p.name] = { team: teamName, teamId: p.team_id, goals: p.goals, assists: p.assists };
+        }
+      } catch {}
+
+      try {
+        const resM = await fetchWithRetry("/api/matches");
+        const dbMatches = await resM.json(); // [{id,team1_id,team2_id,score1,score2,played_at}]
+        for (const m of dbMatches) {
+          const t1 = teamIdToName[m.team1_id];
+          const t2 = teamIdToName[m.team2_id];
+          if (!t1 || !t2) continue;
+
+          ensureTeam(t1, m.team1_id);
+          ensureTeam(t2, m.team2_id);
+
+          applyMatchToTables(t1, m.score1, t2, m.score2, +1);
+          history.push({ id: m.id, t1, s1: m.score1, t2, s2: m.score2 });
+        }
+      } catch {}
+
+      render();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to load data: " + e.message);
+      render();
+    } finally {
+      loadPromise = null;
     }
+  })();
 
-    try {
-      const resP = await fetchWithRetry("/api/players");
-      const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
-      for (const p of dbPlayers) {
-        const teamName = teamIdToName[p.team_id] || "Unknown";
-        if (!teams[teamName]) teams[teamName] = { id: p.team_id, P:0, W:0, D:0, L:0, GF:0, GA:0, GD:0, Pts:0 };
-        players[p.name] = { team: teamName, teamId: p.team_id, goals: p.goals, assists: p.assists };
-      }
-    } catch {}
+  return loadPromise;
+}
 
-    // load matches (now store id to support undo)
-    try {
-      const resM = await fetchWithRetry("/api/matches");
-      const dbMatches = await resM.json(); // [{id,team1_id,team2_id,score1,score2,played_at}]
-      for (const m of dbMatches) {
-        const t1 = teamIdToName[m.team1_id];
-        const t2 = teamIdToName[m.team2_id];
-        if (!t1 || !t2) continue;
+async function resetDashboard() {
+  const button = document.getElementById("resetButton");
+  const originalLabel = button ? button.textContent : "";
 
-        ensureTeam(t1, m.team1_id);
-        ensureTeam(t2, m.team2_id);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Resetting...";
+  }
 
-        applyMatchToTables(t1, m.score1, t2, m.score2, +1);
-        history.push({ id: m.id, t1, s1: m.score1, t2, s2: m.score2 });
-      }
-    } catch {}
-
-    render();
-  } catch (e) {
-    console.error(e);
-    alert("Failed to load data: " + e.message);
+  try {
+    if (loadPromise) {
+      await loadPromise;
+    }
+    await loadAllData({ showInterim: true });
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel || "Reset dashboard";
+    }
   }
 }
 
