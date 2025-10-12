@@ -109,6 +109,33 @@ th { background: #f9f9f9; }
     background: #e5e7eb;
     color: #111827;
 }
+.btn-highlight {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: #ffffff;
+    padding: 9px 18px;
+    border-radius: 9999px;
+    font-weight: 600;
+    border: none;
+    box-shadow: 0 12px 24px rgba(99, 102, 241, 0.25);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.btn-highlight:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 28px rgba(99, 102, 241, 0.35);
+}
+.btn-highlight span.icon {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    background: rgba(255,255,255,0.2);
+    font-size: 0.9rem;
+}
 .player-list {
     display: flex;
     flex-direction: column;
@@ -177,6 +204,8 @@ th { background: #f9f9f9; }
   button { margin-left: 0; width: 100%; }
   .modal { padding: 18px; width: 92%; }
   .modal .field-inline { flex-direction: column; }
+  .selection-summary { flex-direction: column; }
+  .btn-highlight { width: 100%; justify-content: center; }
 }
 </style>
 </head>
@@ -206,7 +235,10 @@ th { background: #f9f9f9; }
 <div class="card">
   <h2>Player Statistics</h2>
   <p style="margin: 0 0 12px; color:#4b5563;">Quickly capture goals and assists for players currently on the pitch.</p>
-  <button class="btn-outline" onclick="openStatsModal()">Log Goal / Assist</button>
+  <button class="btn-highlight" onclick="openStatsModal()" id="recordStatsButton">
+    <span class="icon">⚽</span>
+    Log Goal / Assist
+  </button>
 </div>
 
 <div class="tables-container">
