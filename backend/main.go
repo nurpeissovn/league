@@ -615,7 +615,9 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (player_id, snapshot_date)
-			DO UPDATE SET goals = EXCLUDED.goals, assists = EXCLUDED.assists, points = EXCLUDED.points
+			DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
+				assists = player_stats.assists + EXCLUDED.assists,
+				points = player_stats.points + EXCLUDED.points
 		`, p.id, snapshotDate, p.goals, p.assists, points); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

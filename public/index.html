@@ -227,7 +227,7 @@ th { background: #f9f9f9; }
     </div>
     <button onclick="handleSubmit()">Submit Match</button>
     <button class="btn-danger" onclick="undoLastMatch()">Undo last match</button>
-    <button id="resetButton" class="btn-secondary" onclick="resetDashboard()">Reset dashboard</button>
+    <button id="resetButton" class="btn-secondary" onclick="openResetModal()">Reset dashboard</button>
     <button id="toggleAutoSuggest" class="btn-secondary" onclick="toggleAutoSuggest()">Auto-suggest: on</button>
   </div>
 </div>
@@ -297,6 +297,22 @@ th { background: #f9f9f9; }
   </div>
 </div>
 
+<div id="resetOverlay" class="modal-overlay hidden" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="resetModalTitle">
+    <button class="modal-close" type="button" aria-label="Close" onclick="closeResetModal()">&times;</button>
+    <h3 id="resetModalTitle">Finalize Weekly Snapshot</h3>
+    <p class="subtle">Choose the week/date this snapshot belongs to. We'll store player stats under that date.</p>
+    <div class="field">
+      <label for="snapshotDateInput">Snapshot Date</label>
+      <input id="snapshotDateInput" type="date">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" type="button" onclick="closeResetModal()">Cancel</button>
+      <button type="button" onclick="confirmResetFromModal()">Save Snapshot</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const teams = {};           // { teamName: { id, P,W,D,L,GF,GA,GD,Pts } }
 const players = {};         // { playerName: { team, teamId, goals, assists } }
@@ -312,6 +328,7 @@ let autoSuggestEnabled = true;
 let currentPlayerPool = [];
 let modalSelectedGoal = null;
 let modalSelectedAssist = null;
+let pendingResetDate = null;
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -405,7 +422,7 @@ async function loadAllData(options = {}) {
   return loadPromise;
 }
 
-async function resetDashboard() {
+async function resetDashboard(chosenDateIso) {
   const button = document.getElementById("resetButton");
   const originalLabel = button ? button.textContent : "";
 
@@ -418,7 +435,7 @@ async function resetDashboard() {
     if (loadPromise) {
       await loadPromise;
     }
-    const snapshotAt = new Date().toISOString();
+    const snapshotAt = chosenDateIso || new Date().toISOString();
     const res = await fetch("/api/snapshot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -642,6 +659,37 @@ function openStatsModal() {
   overlay.setAttribute("aria-hidden", "false");
   const focusTarget = list.querySelector('.player-card') || saveButton;
   if (focusTarget) focusTarget.focus();
+}
+
+function openResetModal() {
+  const overlay = document.getElementById("resetOverlay");
+  const dateInput = document.getElementById("snapshotDateInput");
+  const today = new Date();
+  const iso = today.toISOString().slice(0,10);
+  if (dateInput) {
+    dateInput.value = pendingResetDate ? pendingResetDate.slice(0,10) : iso;
+  }
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  if (dateInput) dateInput.focus();
+}
+
+function closeResetModal() {
+  const overlay = document.getElementById("resetOverlay");
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+}
+
+async function confirmResetFromModal() {
+  const dateInput = document.getElementById("snapshotDateInput");
+  if (!dateInput || !dateInput.value) {
+    alert("Please choose a snapshot date.");
+    return;
+  }
+  pendingResetDate = dateInput.value;
+  closeResetModal();
+  const iso = `${pendingResetDate}T00:00:00Z`;
+  await resetDashboard(iso);
 }
 
 function handlePlayerSelection(name) {
@@ -977,9 +1025,19 @@ if (statsOverlay) {
   });
 }
 
+const resetOverlay = document.getElementById("resetOverlay");
+if (resetOverlay) {
+  resetOverlay.addEventListener('click', (event) => {
+    if (event.target === resetOverlay) {
+      closeResetModal();
+    }
+  });
+}
+
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeStatsModal();
+    closeResetModal();
   }
 });
 
