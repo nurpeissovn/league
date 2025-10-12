@@ -134,6 +134,7 @@ let teamIdToName = {};      // { id: name }
 let sticky = { team1: null, team2: null, player: null };
 
 let loadPromise = null;
+let nextMatchSuggestion = null;
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -152,6 +153,7 @@ function clearState() {
   history.length = 0;
   teamIdToName = {};
   sticky = { team1: null, team2: null, player: null };
+  nextMatchSuggestion = null;
 
   ["score1", "score2", "goals", "assists"].forEach(id => {
     const input = document.getElementById(id);
@@ -202,6 +204,13 @@ async function loadAllData(options = {}) {
           history.push({ id: m.id, t1, s1: m.score1, t2, s2: m.score2 });
         }
       } catch {}
+
+      nextMatchSuggestion = suggestNextMatch(teams, history);
+      if (nextMatchSuggestion) {
+        sticky.team1 = nextMatchSuggestion.team1;
+        sticky.team2 = nextMatchSuggestion.team2;
+        sticky.player = null;
+      }
 
       render();
     } catch (e) {
@@ -285,6 +294,15 @@ async function handleSubmit() {
   if (!t1 || !t2) return alert("Pick both teams");
   if (t1 === t2) return alert("Team cannot play itself!");
 
+  const lastMatch = history[history.length - 1];
+  if (lastMatch) {
+    const lastPair = new Set([lastMatch.t1, lastMatch.t2]);
+    if (lastPair.size === 2 && lastPair.has(t1) && lastPair.has(t2)) {
+      alert("These teams just played. Rotate opponents before submitting again.");
+      return;
+    }
+  }
+
   // remember current choices so they stick after render
   sticky.team1 = t1;
   sticky.team2 = t2;
@@ -307,6 +325,12 @@ async function handleSubmit() {
     // update local state
     applyMatchToTables(t1, s1, t2, s2, +1);
     history.push({ id: data.id, t1, s1, t2, s2 });
+
+    nextMatchSuggestion = suggestNextMatch(teams, history);
+    if (nextMatchSuggestion) {
+      sticky.team1 = nextMatchSuggestion.team1;
+      sticky.team2 = nextMatchSuggestion.team2;
+    }
 
     render();
     fireworks("Done ✅");
@@ -341,6 +365,12 @@ async function undoLastMatch() {
     sticky.team1 = t1Sel.value || sticky.team1;
     sticky.team2 = t2Sel.value || sticky.team2;
     sticky.player = pSel.value   || sticky.player;
+
+    nextMatchSuggestion = suggestNextMatch(teams, history);
+    if (nextMatchSuggestion) {
+      sticky.team1 = nextMatchSuggestion.team1;
+      sticky.team2 = nextMatchSuggestion.team2;
+    }
 
     render();
     fireworks("Undone ⏪");
@@ -521,6 +551,113 @@ function render() {
   // Match history
   document.querySelector("#historyTable tbody").innerHTML =
     history.map((m, i) => `<tr><td>${i+1}</td><td>${m.t1} vs ${m.t2}</td><td>${m.t1} ${m.s1} - ${m.s2} ${m.t2}</td></tr>`).join("");
+
+  applyNextMatchSuggestion();
+}
+
+function suggestNextMatch(teamRecords, matchHistory) {
+  const teamNames = Object.keys(teamRecords)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  if (teamNames.length < 3) return null;
+
+  const activeTeams = teamNames.slice(0, 3);
+  const relevantMatches = matchHistory.filter(
+    (m) => activeTeams.includes(m.t1) && activeTeams.includes(m.t2)
+  );
+  const consecutive = Object.fromEntries(activeTeams.map((name) => [name, 0]));
+  const maxStreak = 3;
+
+  if (relevantMatches.length === 0) {
+    return {
+      team1: activeTeams[0],
+      team2: activeTeams[1],
+      waiting: activeTeams[2],
+    };
+  }
+
+  let currentPitch = [relevantMatches[0].t1, relevantMatches[0].t2];
+
+  for (const match of relevantMatches) {
+    currentPitch = [match.t1, match.t2];
+    const waitingTeam = activeTeams.find((name) => !currentPitch.includes(name));
+    const playing = currentPitch.slice();
+
+    playing.forEach((name) => {
+      consecutive[name] = (consecutive[name] || 0) + 1;
+    });
+    activeTeams.forEach((name) => {
+      if (!playing.includes(name)) consecutive[name] = 0;
+    });
+
+    const score1 = Number(match.s1);
+    const score2 = Number(match.s2);
+    let nextPitch = currentPitch.slice();
+
+    if (Number.isFinite(score1) && Number.isFinite(score2) && score1 !== score2) {
+      const winner = score1 > score2 ? match.t1 : match.t2;
+      const loser = winner === match.t1 ? match.t2 : match.t1;
+
+      if (consecutive[winner] >= maxStreak) {
+        consecutive[winner] = 0;
+        nextPitch = [loser, waitingTeam].filter(Boolean);
+      } else {
+        consecutive[loser] = 0;
+        nextPitch = [winner, waitingTeam].filter(Boolean);
+      }
+    } else {
+      const info = currentPitch.map((name) => ({ name, streak: consecutive[name] }));
+      info.sort((a, b) => b.streak - a.streak || a.name.localeCompare(b.name));
+      const teamOut = info[0]?.name;
+      const teamStay = info[1]?.name;
+      if (teamOut) consecutive[teamOut] = 0;
+      nextPitch = [teamStay, waitingTeam].filter(Boolean);
+    }
+
+    if (nextPitch.length < 2) {
+      nextPitch = activeTeams.slice(0, 2);
+    }
+
+    currentPitch = nextPitch;
+    const waiting = activeTeams.find((name) => !currentPitch.includes(name));
+    activeTeams.forEach((name) => {
+      if (!currentPitch.includes(name)) consecutive[name] = consecutive[name] || 0;
+      if (name === waiting) consecutive[name] = 0;
+    });
+  }
+
+  if (currentPitch.length < 2) {
+    return {
+      team1: activeTeams[0],
+      team2: activeTeams[1],
+      waiting: activeTeams[2],
+    };
+  }
+
+  return {
+    team1: currentPitch[0],
+    team2: currentPitch[1],
+    waiting: activeTeams.find((name) => !currentPitch.includes(name)),
+  };
+}
+
+function applyNextMatchSuggestion() {
+  if (!nextMatchSuggestion) return;
+  const { team1, team2 } = nextMatchSuggestion;
+  if (!team1 || !team2 || team1 === team2) return;
+
+  const team1Select = document.getElementById("team1");
+  const team2Select = document.getElementById("team2");
+  if (!team1Select || !team2Select) return;
+
+  if (Array.from(team1Select.options).some((opt) => opt.value === team1)) {
+    team1Select.value = team1;
+  }
+  if (Array.from(team2Select.options).some((opt) => opt.value === team2)) {
+    team2Select.value = team2;
+  }
+  sticky.team1 = team1;
+  sticky.team2 = team2;
 }
 
 // Load all data on page load
