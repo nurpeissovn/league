@@ -73,7 +73,7 @@ func main() {
 	mux.Handle("/api/delete-match", withJSON(db, deleteMatchHandler))
 	mux.Handle("/api/add-player", withJSON(db, addPlayerHandler))
 	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
-	
+
 	// Team routes
 	mux.Handle("/api/add-team", withJSON(db, addTeamHandler))
 	mux.HandleFunc("/api/list-teams", func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +83,7 @@ func main() {
 		}
 		listTeamsHandler(db, w, r)
 	})
-	
+
 	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -91,13 +91,21 @@ func main() {
 		}
 		listPlayersHandler(db, w, r)
 	})
-	
+
 	mux.HandleFunc("/api/matches", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return
 		}
 		listMatchesHandler(db, w, r)
+	})
+
+	mux.HandleFunc("/ranking", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		getPlayerRanking(db, w, r)
 	})
 
 	// static
@@ -270,6 +278,72 @@ func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
+type rankingDailyStat struct {
+	Date  string `json:"date"`
+	Goals int    `json:"goals"`
+}
+
+type rankingEntry struct {
+	Name       string             `json:"name"`
+	DailyStats []rankingDailyStat `json:"daily_stats"`
+	TotalGoals int                `json:"total_goals"`
+}
+
+func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", http.StatusInternalServerError)
+		return
+	}
+
+	const query = `
+		SELECT
+			p.name,
+			json_agg(json_build_object('date', ps.match_date, 'goals', ps.goals) ORDER BY ps.match_date) AS daily_stats,
+			COALESCE(SUM(ps.goals), 0) AS total_goals
+		FROM player_stats ps
+		JOIN players p ON p.id = ps.player_id
+		GROUP BY p.name
+		ORDER BY total_goals DESC`
+
+	rows, err := db.QueryContext(r.Context(), query)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var rankings []rankingEntry
+	for rows.Next() {
+		var (
+			name       string
+			dailyJSON  []byte
+			totalGoals int
+		)
+		if err := rows.Scan(&name, &dailyJSON, &totalGoals); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		entry := rankingEntry{Name: name, TotalGoals: totalGoals}
+		if len(dailyJSON) > 0 {
+			if err := json.Unmarshal(dailyJSON, &entry.DailyStats); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		rankings = append(rankings, entry)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(rankings); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // ---------- API handlers ----------
 
 func withJSON(db *sql.DB, h func(db *sql.DB, w http.ResponseWriter, r *http.Request)) http.Handler {
@@ -394,7 +468,7 @@ func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid player", 400)
 		return
 	}
-	
+
 	_, err := db.ExecContext(r.Context(),
 		`DELETE FROM players WHERE name = $1 AND team_id = $2`,
 		req.Name, req.TeamID)
