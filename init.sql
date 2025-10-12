@@ -20,3 +20,13 @@ CREATE TABLE IF NOT EXISTS matches (
   score2 INT NOT NULL,
   played_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS player_stats (
+  id SERIAL PRIMARY KEY,
+  player_id INT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  snapshot_date DATE NOT NULL,
+  goals INT NOT NULL DEFAULT 0,
+  assists INT NOT NULL DEFAULT 0,
+  points INT NOT NULL DEFAULT 0,
+  UNIQUE (player_id, snapshot_date)
+);

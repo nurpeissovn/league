@@ -229,7 +229,23 @@ async function resetDashboard() {
     if (loadPromise) {
       await loadPromise;
     }
+    const snapshotAt = new Date().toISOString();
+    const res = await fetch("/api/snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ snapshot_at: snapshotAt })
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || "Failed to snapshot stats");
+    }
+
     await loadAllData({ showInterim: true });
+
+    fireworks("Reset ✅");
+  } catch (err) {
+    console.error(err);
+    alert(`Reset failed: ${err.message || err}`);
   } finally {
     if (button) {
       button.disabled = false;

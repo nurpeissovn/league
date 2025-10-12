@@ -9,12 +9,14 @@
     body { background: linear-gradient(to bottom right, #e0e7ff, #c7d2fe); font-family: 'Inter', sans-serif; }
     .table-container { backdrop-filter: blur(20px); background: rgba(255,255,255,0.9); border-radius: 20px; box-shadow: 0 12px 36px rgba(0,0,0,0.1); }
     .fade-in { animation: fadein 0.7s ease; }
-    .table-wrapper { max-width: 100%; overflow-x: auto; }
-    table { min-width: 600px; }
+    .table-wrapper { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-spacing: 0 0.75rem; }
+    th, td { padding: 0.75rem; text-align: center; word-break: break-word; }
     @media (max-width: 640px) {
       body { padding: 16px; }
-      table { min-width: 500px; font-size: 0.9rem; }
-      th, td { padding: 0.5rem; }
+      h1 { font-size: 2.25rem; }
+      .table-container { padding: 1rem; }
+      th, td { padding: 0.4rem 0.35rem; font-size: 0.85rem; }
     }
     @keyframes fadein { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   </style>
@@ -23,15 +25,16 @@
   <h1 class="text-5xl font-extrabold text-center mb-8 text-indigo-700 drop-shadow-lg">🏆 League Player Rankings</h1>
   <div class="table-wrapper">
     <div id="rankingTable" class="table-container p-4 sm:p-6 mx-auto max-w-6xl fade-in">
-      <table class="min-w-full text-center border-separate border-spacing-y-2">
+      <table class="min-w-full text-center border-separate">
         <thead class="text-gray-700 text-lg">
           <tr id="tableHeader" class="bg-indigo-100 rounded-lg">
             <th class="py-3 px-4 rounded-l-xl cursor-pointer" onclick="toggleSort()">Rank ⬇</th>
             <th class="py-3 px-4">Player</th>
+            <th class="py-3 px-4">Last Snapshot</th>
             <th class="py-3 px-4">Goals ⚽</th>
             <th class="py-3 px-4">Assists 🎯</th>
             <th class="py-3 px-4">Total Points (G+A)</th>
-            <th class="py-3 px-4 rounded-r-xl">Weekly Total</th>
+            <th class="py-3 px-4 rounded-r-xl">All Weeks Total</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -62,16 +65,20 @@
         rankingData = Array.from(allNames).map(name => {
           const player = playerByName.get(name);
           const rankingInfo = rankingByName.get(name);
-          const goals = player ? player.goals : (rankingInfo ? rankingInfo.total_goals : 0);
-          const assists = player ? player.assists : 0;
-          const totalPoints = goals + assists;
-          const weeklyTotal = (rankingInfo?.daily_stats || []).reduce((sum, d) => sum + (d.goals || 0), 0) || (rankingInfo ? rankingInfo.total_goals : goals);
+          const dailyStats = rankingInfo?.daily_stats || [];
+          const lastSnapshot = rankingInfo?.last_snapshot || (dailyStats.length ? dailyStats[dailyStats.length - 1].date : '');
+          const recordedTotal = rankingInfo ? rankingInfo.total_points : dailyStats.reduce((sum, d) => sum + (d.points || d.goals || 0), 0);
+          const latestStats = dailyStats.length ? dailyStats[dailyStats.length - 1] : null;
+          const goals = player ? player.goals : latestStats ? latestStats.goals : 0;
+          const assists = player ? player.assists : latestStats ? latestStats.assists : 0;
+          const totalPoints = player ? player.goals + player.assists : latestStats ? (latestStats.points || latestStats.goals + latestStats.assists) : recordedTotal;
           return {
             name,
             goals,
             assists,
             totalPoints,
-            weeklyTotal,
+            weeklyTotal: recordedTotal,
+            lastSnapshot,
           };
         });
 
@@ -79,7 +86,7 @@
         renderRanking();
       } catch (err) {
         const body = document.getElementById('tableBody');
-        body.innerHTML = `<tr><td colspan="6" class="py-6 text-red-600 font-semibold">Failed to load ranking: ${err.message || err}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="7" class="py-6 text-red-600 font-semibold">Failed to load ranking: ${err.message || err}</td></tr>`;
       }
     }
 
@@ -98,27 +105,35 @@
       headerRow.innerHTML = `
         <th class="py-3 px-4 rounded-l-xl cursor-pointer" onclick="toggleSort()">Rank ${sortDescending ? '⬇' : '⬆'}</th>
         <th class="py-3 px-4">Player</th>
+        <th class="py-3 px-4">Last Snapshot</th>
         <th class="py-3 px-4">Goals ⚽</th>
         <th class="py-3 px-4">Assists 🎯</th>
         <th class="py-3 px-4">Total Points (G+A)</th>
-        <th class="py-3 px-4 rounded-r-xl">Weekly Total</th>`;
+        <th class="py-3 px-4 rounded-r-xl">All Weeks Total</th>`;
 
       const data = sortDescending ? rankingData : [...rankingData].reverse();
       const tbody = document.getElementById('tableBody');
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-gray-600">No player data yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="py-6 text-gray-600">No player data yet.</td></tr>';
         return;
       }
       tbody.innerHTML = data.map((player, index) => `
         <tr class="bg-white hover:bg-indigo-50 transition rounded-xl shadow-sm fade-in">
           <td class="py-3 px-4 font-bold text-indigo-600">${index + 1}</td>
           <td class="py-3 px-4 font-semibold">${player.name}</td>
+          <td class="py-3 px-4">${player.lastSnapshot ? formatDate(player.lastSnapshot) : '—'}</td>
           <td class="py-3 px-4">${player.goals}</td>
           <td class="py-3 px-4">${player.assists}</td>
           <td class="py-3 px-4 font-semibold">${player.totalPoints}</td>
           <td class="py-3 px-4 font-bold text-indigo-700">${player.weeklyTotal}</td>
         </tr>
       `).join('');
+    }
+
+    function formatDate(dateStr) {
+      const date = new Date(dateStr);
+      if (Number.isNaN(date.getTime())) return dateStr;
+      return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
     }
 
     function toggleSort() {

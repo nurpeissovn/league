@@ -73,6 +73,7 @@ func main() {
 	mux.Handle("/api/delete-match", withJSON(db, deleteMatchHandler))
 	mux.Handle("/api/add-player", withJSON(db, addPlayerHandler))
 	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
+	mux.Handle("/api/snapshot", withJSON(db, snapshotHandler))
 
 	// Team routes
 	mux.Handle("/api/add-team", withJSON(db, addTeamHandler))
@@ -279,14 +280,17 @@ func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 }
 
 type rankingDailyStat struct {
-	Date  string `json:"date"`
-	Goals int    `json:"goals"`
+	Date    string `json:"date"`
+	Goals   int    `json:"goals"`
+	Assists int    `json:"assists"`
+	Points  int    `json:"points"`
 }
 
 type rankingEntry struct {
-	Name       string             `json:"name"`
-	DailyStats []rankingDailyStat `json:"daily_stats"`
-	TotalGoals int                `json:"total_goals"`
+	Name         string             `json:"name"`
+	DailyStats   []rankingDailyStat `json:"daily_stats"`
+	TotalPoints  int                `json:"total_points"`
+	LastSnapshot string             `json:"last_snapshot"`
 }
 
 func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
@@ -317,15 +321,24 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 		SELECT
 			p.name,
 			COALESCE(
-				json_agg(json_build_object('date', ps.match_date, 'goals', ps.goals) ORDER BY ps.match_date)
-				FILTER (WHERE ps.match_date IS NOT NULL),
+				json_agg(
+					json_build_object(
+						'date', ps.snapshot_date,
+						'goals', ps.goals,
+						'assists', ps.assists,
+						'points', ps.points
+					)
+					ORDER BY ps.snapshot_date
+				)
+				FILTER (WHERE ps.snapshot_date IS NOT NULL),
 				'[]'::json
 			) AS daily_stats,
-			COALESCE(SUM(ps.goals), 0) AS total_goals
+			COALESCE(SUM(ps.points), 0) AS total_points,
+			MAX(ps.snapshot_date) AS last_snapshot
 		FROM players p
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
 		GROUP BY p.id, p.name
-		ORDER BY total_goals DESC, p.name ASC`
+		ORDER BY total_points DESC, p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -336,15 +349,16 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 	var rankings []rankingEntry
 	for rows.Next() {
 		var (
-			name       string
-			dailyJSON  []byte
-			totalGoals int
+			name         string
+			dailyJSON    []byte
+			totalPoints  int
+			lastSnapshot sql.NullTime
 		)
-		if err := rows.Scan(&name, &dailyJSON, &totalGoals); err != nil {
+		if err := rows.Scan(&name, &dailyJSON, &totalPoints, &lastSnapshot); err != nil {
 			return nil, err
 		}
 
-		entry := rankingEntry{Name: name, TotalGoals: totalGoals}
+		entry := rankingEntry{Name: name, TotalPoints: totalPoints}
 		if len(dailyJSON) > 0 {
 			if err := json.Unmarshal(dailyJSON, &entry.DailyStats); err != nil {
 				return nil, err
@@ -352,6 +366,9 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 		}
 		if entry.DailyStats == nil {
 			entry.DailyStats = []rankingDailyStat{}
+		}
+		if lastSnapshot.Valid {
+			entry.LastSnapshot = lastSnapshot.Time.Format("2006-01-02")
 		}
 		rankings = append(rankings, entry)
 	}
@@ -366,9 +383,9 @@ func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, e
 	const query = `
 		SELECT
 			p.name,
-			COALESCE(p.goals, 0) AS total_goals
+			COALESCE(p.goals + p.assists, 0) AS total_points
 		FROM players p
-		ORDER BY total_goals DESC, p.name ASC`
+		ORDER BY total_points DESC, p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -379,10 +396,11 @@ func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, e
 	var rankings []rankingEntry
 	for rows.Next() {
 		var entry rankingEntry
-		if err := rows.Scan(&entry.Name, &entry.TotalGoals); err != nil {
+		if err := rows.Scan(&entry.Name, &entry.TotalPoints); err != nil {
 			return nil, err
 		}
 		entry.DailyStats = []rankingDailyStat{}
+		entry.LastSnapshot = ""
 		rankings = append(rankings, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -527,6 +545,95 @@ func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
+}
+
+type snapshotRequest struct {
+	SnapshotAt string `json:"snapshot_at"`
+}
+
+func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", http.StatusInternalServerError)
+		return
+	}
+
+	var req snapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	snapshotTime := time.Now().UTC()
+	if strings.TrimSpace(req.SnapshotAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, req.SnapshotAt)
+		if err != nil {
+			http.Error(w, "invalid snapshot_at", http.StatusBadRequest)
+			return
+		}
+		snapshotTime = parsed.UTC()
+	}
+	snapshotDate := snapshotTime.Format("2006-01-02")
+
+	ctx := r.Context()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, goals, assists FROM players ORDER BY id`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id      int
+			goals   int
+			assists int
+		)
+		if err := rows.Scan(&id, &goals, &assists); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		points := goals + assists
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (player_id, snapshot_date)
+			DO UPDATE SET goals = EXCLUDED.goals, assists = EXCLUDED.assists, points = EXCLUDED.points
+		`, id, snapshotDate, goals, assists, points); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE players SET goals = 0, assists = 0`); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM matches`); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"snapshot_date": snapshotDate,
+	})
 }
 
 // ---------- static helpers ----------
