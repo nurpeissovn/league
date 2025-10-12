@@ -43,7 +43,7 @@ th { background: #f9f9f9; }
 .tables-container { display: flex; gap: 20px; flex-wrap: wrap; }
 .tables-container .card { flex: 1; min-width: 300px; }
 .flex-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-.hidden { display: none; }
+.hidden { display: none !important; }
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -134,6 +134,16 @@ th { background: #f9f9f9; }
 .player-card span:last-child { color: #64748b; font-size: 0.85rem; margin-left: 12px; }
 .player-card:hover { background: #eef2ff; border-color: #6366f1; transform: translateY(-1px); }
 .player-card.active { background: #e0e7ff; border-color: #4338ca; color: #312e81; }
+.empty-state {
+    padding: 16px;
+    text-align: center;
+    color: #6b7280;
+    border: 1px dashed #cbd5f5;
+    border-radius: 10px;
+    background: #f8fafc;
+    font-size: 0.95rem;
+}
+.modal-overlay.hidden { display: none !important; }
 
 @media (max-width: 640px) {
   body { padding: 12px; }
@@ -174,7 +184,7 @@ th { background: #f9f9f9; }
 <div class="card">
   <h2>Player Statistics</h2>
   <p style="margin: 0 0 12px; color:#4b5563;">Quickly capture goals and assists for players currently on the pitch.</p>
-  <button class="btn-outline" onclick="openStatsModal()">Record Player Stats</button>
+  <button class="btn-outline" onclick="openStatsModal()">Log Goal / Assist</button>
 </div>
 
 <div class="tables-container">
@@ -228,7 +238,7 @@ th { background: #f9f9f9; }
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" type="button" onclick="closeStatsModal()">Cancel</button>
-      <button type="button" onclick="submitStatsFromModal()">Save Stats</button>
+      <button id="modalSaveButton" type="button" onclick="submitStatsFromModal()">Save Stats</button>
     </div>
   </div>
 </div>
@@ -543,15 +553,11 @@ async function recordPlayerStats(playerName, goalsDelta, assistsDelta) {
 }
 
 function openStatsModal() {
-  if (!currentPlayerPool.length) {
-    alert("No players available. Add teams and players first or select teams above.");
-    return;
-  }
-
   const overlay = document.getElementById("statsOverlay");
   const list = document.getElementById("modalPlayerList");
   const goalsInput = document.getElementById("modalGoals");
   const assistsInput = document.getElementById("modalAssists");
+  const saveButton = document.getElementById("modalSaveButton");
 
   list.innerHTML = "";
   const defaultPlayer = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
@@ -559,28 +565,33 @@ function openStatsModal() {
     : currentPlayerPool[0]?.name;
   modalSelectedPlayer = defaultPlayer || null;
 
-  currentPlayerPool.forEach(({ name, team }) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "player-card" + (name === modalSelectedPlayer ? " active" : "");
-    card.dataset.player = name;
-    card.innerHTML = `<span>${name}</span><span>${team || ''}</span>`;
-    card.addEventListener('click', () => {
-      modalSelectedPlayer = name;
-      sticky.player = name;
-      updateModalPlayerCards();
+  if (currentPlayerPool.length === 0) {
+    list.innerHTML = '<div class="empty-state">No registered players yet. Add them on the registration page.</div>';
+    if (saveButton) saveButton.disabled = true;
+  } else {
+    currentPlayerPool.forEach(({ name, team }) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "player-card" + (name === modalSelectedPlayer ? " active" : "");
+      card.dataset.player = name;
+      card.innerHTML = `<span>${name}</span><span>${team || ''}</span>`;
+      card.addEventListener('click', () => {
+        modalSelectedPlayer = name;
+        sticky.player = name;
+        updateModalPlayerCards();
+      });
+      list.appendChild(card);
     });
-    list.appendChild(card);
-  });
-
-  updateModalPlayerCards();
+    if (saveButton) saveButton.disabled = false;
+    updateModalPlayerCards();
+  }
 
   goalsInput.value = 0;
   assistsInput.value = 0;
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
-  const firstCard = list.querySelector('.player-card');
-  if (firstCard) firstCard.focus();
+  const focusTarget = list.querySelector('.player-card') || saveButton;
+  if (focusTarget) focusTarget.focus();
 }
 
 function closeStatsModal() {
@@ -595,6 +606,10 @@ async function submitStatsFromModal() {
   const assistsInput = document.getElementById("modalAssists");
 
   const playerName = modalSelectedPlayer;
+  if (!playerName) {
+    alert("Pick a player before saving stats.");
+    return;
+  }
   const goals = parseInt(goalsInput.value, 10) || 0;
   const assists = parseInt(assistsInput.value, 10) || 0;
 
@@ -609,13 +624,22 @@ async function submitStatsFromModal() {
 function updateModalPlayerCards() {
   const list = document.getElementById("modalPlayerList");
   if (!list) return;
+  let hasActive = false;
   Array.from(list.querySelectorAll('.player-card')).forEach(card => {
-    if (card.dataset.player === modalSelectedPlayer) {
+    if (modalSelectedPlayer && card.dataset.player === modalSelectedPlayer) {
       card.classList.add('active');
+      hasActive = true;
     } else {
       card.classList.remove('active');
     }
   });
+  if (!hasActive) {
+    const first = list.querySelector('.player-card');
+    if (first) {
+      modalSelectedPlayer = first.dataset.player;
+      first.classList.add('active');
+    }
+  }
 }
 
 function fireworks(text = "") {
