@@ -28,13 +28,7 @@
       <table class="min-w-full text-center border-separate">
         <thead class="text-gray-700 text-lg">
           <tr id="tableHeader" class="bg-indigo-100 rounded-lg">
-            <th class="py-3 px-4 rounded-l-xl cursor-pointer" onclick="toggleSort()">Rank ⬇</th>
-            <th class="py-3 px-4">Player</th>
-            <th class="py-3 px-4">Last Snapshot</th>
-            <th class="py-3 px-4">Goals ⚽</th>
-            <th class="py-3 px-4">Assists 🎯</th>
-            <th class="py-3 px-4">Total Points (G+A)</th>
-            <th class="py-3 px-4 rounded-r-xl">All Weeks Total</th>
+            <th class="py-3 px-4 rounded-l-xl cursor-pointer" onclick="toggleSort()">Player ⬇</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -43,7 +37,8 @@
   </div>
 
   <script>
-    let rankingData = [];
+    let rankingRows = [];
+    let dateColumns = [];
     let sortDescending = true;
 
     async function loadRanking() {
@@ -59,75 +54,87 @@
         const ranking = rankingRes.ok ? await rankingRes.json() : [];
 
         const rankingByName = new Map(ranking.map(entry => [entry.name, entry]));
-        const playerByName = new Map(players.map(p => [p.name, p]));
-        const allNames = new Set([...playerByName.keys(), ...rankingByName.keys()]);
+        const playerNames = new Set([
+          ...players.map(p => p.name),
+          ...ranking.map(entry => entry.name)
+        ]);
 
-        rankingData = Array.from(allNames).map(name => {
-          const player = playerByName.get(name);
-          const rankingInfo = rankingByName.get(name);
-          const dailyStats = rankingInfo?.daily_stats || [];
-          const lastSnapshot = rankingInfo?.last_snapshot || (dailyStats.length ? dailyStats[dailyStats.length - 1].date : '');
-          const recordedTotal = rankingInfo ? rankingInfo.total_points : dailyStats.reduce((sum, d) => sum + (d.points || d.goals || 0), 0);
-          const latestStats = dailyStats.length ? dailyStats[dailyStats.length - 1] : null;
-          const goals = player ? player.goals : latestStats ? latestStats.goals : 0;
-          const assists = player ? player.assists : latestStats ? latestStats.assists : 0;
-          const totalPoints = player ? player.goals + player.assists : latestStats ? (latestStats.points || latestStats.goals + latestStats.assists) : recordedTotal;
-          return {
-            name,
-            goals,
-            assists,
-            totalPoints,
-            weeklyTotal: recordedTotal,
-            lastSnapshot,
-          };
+        const dateSet = new Set();
+        ranking.forEach(entry => {
+          (entry.daily_stats || []).forEach(stat => {
+            if (stat?.date) dateSet.add(stat.date);
+          });
         });
 
-        rankingData.sort(compareEntries);
+        dateColumns = Array.from(dateSet).sort();
+
+        rankingRows = Array.from(playerNames).map(name => {
+          const entry = rankingByName.get(name);
+          const statsByDate = {};
+          if (entry && Array.isArray(entry.daily_stats)) {
+            entry.daily_stats.forEach(stat => {
+              if (!stat || !stat.date) return;
+              const goals = Number(stat.goals || 0);
+              const assists = Number(stat.assists || 0);
+              const points = Number(stat.points || goals + assists);
+              statsByDate[stat.date] = { goals, assists, points };
+            });
+          }
+          const totalPoints = Object.values(statsByDate).reduce((sum, stat) => sum + (stat.points || 0), 0);
+          return { name, statsByDate, totalPoints };
+        });
+
+        rankingRows.sort(compareEntries);
         renderRanking();
       } catch (err) {
         const body = document.getElementById('tableBody');
-        body.innerHTML = `<tr><td colspan="7" class="py-6 text-red-600 font-semibold">Failed to load ranking: ${err.message || err}</td></tr>`;
+        body.innerHTML = `<tr><td class="py-6 text-red-600 font-semibold" colspan="1">Failed to load ranking: ${err.message || err}</td></tr>`;
       }
     }
 
     function compareEntries(a, b) {
       if (a.totalPoints === b.totalPoints) {
-        if (a.goals === b.goals) {
-          return a.name.localeCompare(b.name);
-        }
-        return b.goals - a.goals;
+        return a.name.localeCompare(b.name);
       }
       return b.totalPoints - a.totalPoints;
     }
 
     function renderRanking() {
       const headerRow = document.getElementById('tableHeader');
+      const dateHeaders = dateColumns.map(date => `<th class="py-3 px-4">${formatDate(date)}</th>`).join('');
       headerRow.innerHTML = `
-        <th class="py-3 px-4 rounded-l-xl cursor-pointer" onclick="toggleSort()">Rank ${sortDescending ? '⬇' : '⬆'}</th>
-        <th class="py-3 px-4">Player</th>
-        <th class="py-3 px-4">Last Snapshot</th>
-        <th class="py-3 px-4">Goals ⚽</th>
-        <th class="py-3 px-4">Assists 🎯</th>
-        <th class="py-3 px-4">Total Points (G+A)</th>
-        <th class="py-3 px-4 rounded-r-xl">All Weeks Total</th>`;
+        <th class="py-3 px-4 rounded-l-xl cursor-pointer" onclick="toggleSort()">Player ${sortDescending ? '⬇' : '⬆'}</th>
+        ${dateHeaders}`;
 
-      const data = sortDescending ? rankingData : [...rankingData].reverse();
       const tbody = document.getElementById('tableBody');
-      if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="py-6 text-gray-600">No player data yet.</td></tr>';
+      if (dateColumns.length === 0) {
+        const message = rankingRows.length
+          ? 'No snapshots yet. Click reset to log the current stats.'
+          : 'No players found yet.';
+        const colSpan = 1 + dateColumns.length;
+        tbody.innerHTML = `<tr><td class="py-6 text-gray-600" colspan="${colSpan}">${message}</td></tr>`;
         return;
       }
-      tbody.innerHTML = data.map((player, index) => `
-        <tr class="bg-white hover:bg-indigo-50 transition rounded-xl shadow-sm fade-in">
-          <td class="py-3 px-4 font-bold text-indigo-600">${index + 1}</td>
-          <td class="py-3 px-4 font-semibold">${player.name}</td>
-          <td class="py-3 px-4">${player.lastSnapshot ? formatDate(player.lastSnapshot) : '—'}</td>
-          <td class="py-3 px-4">${player.goals}</td>
-          <td class="py-3 px-4">${player.assists}</td>
-          <td class="py-3 px-4 font-semibold">${player.totalPoints}</td>
-          <td class="py-3 px-4 font-bold text-indigo-700">${player.weeklyTotal}</td>
-        </tr>
-      `).join('');
+
+      const orderedRows = sortDescending
+        ? [...rankingRows].sort(compareEntries)
+        : [...rankingRows].sort((a, b) => -compareEntries(a, b));
+
+      tbody.innerHTML = orderedRows.map(row => {
+        const cells = dateColumns.map(date => {
+          const stat = row.statsByDate[date] || { goals: 0, assists: 0, points: 0 };
+          const goals = Number(stat.goals || 0);
+          const assists = Number(stat.assists || 0);
+          const points = Number(stat.points || goals + assists);
+          return `<td class="py-3 px-4" title="Goals: ${goals}, Assists: ${assists}">${goals}+${assists}=${points}</td>`;
+        }).join('');
+
+        return `
+          <tr class="bg-white hover:bg-indigo-50 transition rounded-xl shadow-sm fade-in">
+            <td class="py-3 px-4 font-semibold text-indigo-700">${row.name}</td>
+            ${cells}
+          </tr>`;
+      }).join('');
     }
 
     function formatDate(dateStr) {
