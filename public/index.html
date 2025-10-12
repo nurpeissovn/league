@@ -134,6 +134,8 @@ th { background: #f9f9f9; }
 .player-card span:last-child { color: #64748b; font-size: 0.85rem; margin-left: 12px; }
 .player-card:hover { background: #eef2ff; border-color: #6366f1; transform: translateY(-1px); }
 .player-card.active { background: #e0e7ff; border-color: #4338ca; color: #312e81; }
+.player-card.goal { background: #dcfce7; border-color: #22c55e; color: #166534; }
+.player-card.assist { background: #e0f2fe; border-color: #0284c7; color: #0c4a6e; }
 .empty-state {
     padding: 16px;
     text-align: center;
@@ -142,6 +144,26 @@ th { background: #f9f9f9; }
     border-radius: 10px;
     background: #f8fafc;
     font-size: 0.95rem;
+}
+.selection-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    font-size: 0.95rem;
+    color: #334155;
+}
+.selection-summary div {
+    flex: 1;
+    background: #f1f5f9;
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.selection-summary span {
+    display: block;
+    margin-top: 4px;
+    font-weight: 600;
+    color: #1e3a8a;
 }
 .modal-overlay.hidden { display: none !important; }
 
@@ -222,6 +244,16 @@ th { background: #f9f9f9; }
     <button class="modal-close" type="button" aria-label="Close" onclick="closeStatsModal()">&times;</button>
     <h3 id="statsModalTitle">Record Player Stats</h3>
     <p class="subtle">Select a player and add their contribution for the current match.</p>
+    <div class="selection-summary">
+      <div>
+        Goal Scorer
+        <span id="goalSummary">Not chosen</span>
+      </div>
+      <div>
+        Assist
+        <span id="assistSummary">None</span>
+      </div>
+    </div>
     <div class="field">
       <label>Goal Scorer</label>
       <div id="goalPlayerList" class="player-list"></div>
@@ -562,6 +594,7 @@ function openStatsModal() {
     if (saveButton) saveButton.disabled = true;
     modalSelectedGoal = null;
     modalSelectedAssist = null;
+    updateSelectionSummary();
   } else {
     if (saveButton) saveButton.disabled = false;
     const defaultGoal = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
@@ -617,6 +650,7 @@ function closeStatsModal() {
   overlay.setAttribute("aria-hidden", "true");
   modalSelectedGoal = null;
   modalSelectedAssist = null;
+  updateSelectionSummary();
 }
 
 async function submitStatsFromModal() {
@@ -643,6 +677,7 @@ async function submitStatsFromModal() {
 function refreshModalCards() {
   updateModalPlayerCards('goalPlayerList', modalSelectedGoal);
   updateModalPlayerCards('assistPlayerList', modalSelectedAssist);
+  updateSelectionSummary();
 }
 
 function updateModalPlayerCards(listId, activePlayer) {
@@ -650,8 +685,14 @@ function updateModalPlayerCards(listId, activePlayer) {
   if (!list) return;
   let hasActive = false;
   Array.from(list.querySelectorAll('.player-card')).forEach(card => {
+    card.classList.remove('active', 'goal', 'assist');
     if (activePlayer && card.dataset.player === activePlayer) {
       card.classList.add('active');
+      if (listId === 'goalPlayerList') {
+        card.classList.add('goal');
+      } else {
+        card.classList.add('assist');
+      }
       hasActive = true;
     } else {
       card.classList.remove('active');
@@ -667,7 +708,30 @@ function updateModalPlayerCards(listId, activePlayer) {
         modalSelectedAssist = first.dataset.player;
       }
       first.classList.add('active');
+      if (listId === 'goalPlayerList') {
+        first.classList.add('goal');
+      } else {
+        first.classList.add('assist');
+      }
     }
+  }
+}
+
+function updateSelectionSummary() {
+  const goalEl = document.getElementById('goalSummary');
+  const assistEl = document.getElementById('assistSummary');
+  const saveButton = document.getElementById('modalSaveButton');
+
+  if (goalEl) {
+    goalEl.textContent = modalSelectedGoal || 'Not chosen';
+  }
+  if (assistEl) {
+    assistEl.textContent = (modalSelectedAssist && modalSelectedAssist !== modalSelectedGoal)
+      ? modalSelectedAssist
+      : 'None';
+  }
+  if (saveButton) {
+    saveButton.disabled = !modalSelectedGoal || !currentPlayerPool.length;
   }
 }
 
