@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	pq "github.com/lib/pq"
 )
 
 type AddMatchReq struct {
@@ -295,20 +295,41 @@ func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const query = `
-		SELECT
-			p.name,
-			json_agg(json_build_object('date', ps.match_date, 'goals', ps.goals) ORDER BY ps.match_date) AS daily_stats,
-			COALESCE(SUM(ps.goals), 0) AS total_goals
-		FROM player_stats ps
-		JOIN players p ON p.id = ps.player_id
-		GROUP BY p.name
-		ORDER BY total_goals DESC`
-
-	rows, err := db.QueryContext(r.Context(), query)
+	rankings, err := fetchRankingFromPlayerStats(r.Context(), db)
+	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "42P01" {
+			rankings, err = fetchRankingFromPlayers(r.Context(), db)
+		}
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(rankings); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntry, error) {
+	const query = `
+		SELECT
+			p.name,
+			COALESCE(
+				json_agg(json_build_object('date', ps.match_date, 'goals', ps.goals) ORDER BY ps.match_date)
+				FILTER (WHERE ps.match_date IS NOT NULL),
+				'[]'::json
+			) AS daily_stats,
+			COALESCE(SUM(ps.goals), 0) AS total_goals
+		FROM players p
+		LEFT JOIN player_stats ps ON p.id = ps.player_id
+		GROUP BY p.id, p.name
+		ORDER BY total_goals DESC, p.name ASC`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -320,28 +341,55 @@ func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			totalGoals int
 		)
 		if err := rows.Scan(&name, &dailyJSON, &totalGoals); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 
 		entry := rankingEntry{Name: name, TotalGoals: totalGoals}
 		if len(dailyJSON) > 0 {
 			if err := json.Unmarshal(dailyJSON, &entry.DailyStats); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+				return nil, err
 			}
+		}
+		if entry.DailyStats == nil {
+			entry.DailyStats = []rankingDailyStat{}
 		}
 		rankings = append(rankings, entry)
 	}
 	if err := rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(rankings); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	return rankings, nil
+}
+
+func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, error) {
+	const query = `
+		SELECT
+			p.name,
+			COALESCE(p.goals, 0) AS total_goals
+		FROM players p
+		ORDER BY total_goals DESC, p.name ASC`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
 	}
+	defer rows.Close()
+
+	var rankings []rankingEntry
+	for rows.Next() {
+		var entry rankingEntry
+		if err := rows.Scan(&entry.Name, &entry.TotalGoals); err != nil {
+			return nil, err
+		}
+		entry.DailyStats = []rankingDailyStat{}
+		rankings = append(rankings, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return rankings, nil
 }
 
 // ---------- API handlers ----------
