@@ -255,12 +255,8 @@ th { background: #f9f9f9; }
       </div>
     </div>
     <div class="field">
-      <label>Goal Scorer</label>
-      <div id="goalPlayerList" class="player-list"></div>
-    </div>
-    <div class="field">
-      <label>Assist</label>
-      <div id="assistPlayerList" class="player-list"></div>
+      <label>Players</label>
+      <div id="playerSelectionList" class="player-list"></div>
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" type="button" onclick="closeStatsModal()">Cancel</button>
@@ -581,67 +577,55 @@ async function recordPlayerStats(playerName, goalsDelta, assistsDelta) {
 
 function openStatsModal() {
   const overlay = document.getElementById("statsOverlay");
-  const goalList = document.getElementById("goalPlayerList");
-  const assistList = document.getElementById("assistPlayerList");
+  const list = document.getElementById("playerSelectionList");
   const saveButton = document.getElementById("modalSaveButton");
 
-  goalList.innerHTML = "";
-  assistList.innerHTML = "";
+  list.innerHTML = "";
 
   if (!currentPlayerPool.length) {
-    goalList.innerHTML = '<div class="empty-state">No registered players yet. Add them on the registration page.</div>';
-    assistList.innerHTML = goalList.innerHTML;
+    list.innerHTML = '<div class="empty-state">No registered players yet. Add them on the registration page.</div>';
     if (saveButton) saveButton.disabled = true;
     modalSelectedGoal = null;
     modalSelectedAssist = null;
     updateSelectionSummary();
   } else {
     if (saveButton) saveButton.disabled = false;
-    const defaultGoal = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
+    modalSelectedGoal = (sticky.player && currentPlayerPool.some(p => p.name === sticky.player))
       ? sticky.player
-      : currentPlayerPool[0]?.name;
-    modalSelectedGoal = defaultGoal || currentPlayerPool[0]?.name || null;
-    modalSelectedAssist = currentPlayerPool.find(p => p.name !== modalSelectedGoal)?.name || null;
+      : currentPlayerPool[0]?.name || null;
+    modalSelectedAssist = null;
 
     currentPlayerPool.forEach(({ name, team }) => {
-      const goalCard = document.createElement("button");
-      goalCard.type = "button";
-      goalCard.className = "player-card" + (name === modalSelectedGoal ? " active" : "");
-      goalCard.dataset.player = name;
-      goalCard.innerHTML = `<span>${name}</span><span>${team || ''}</span>`;
-      goalCard.addEventListener('click', () => {
-        modalSelectedGoal = name;
-        if (modalSelectedAssist === modalSelectedGoal) {
-          modalSelectedAssist = currentPlayerPool.find(p => p.name !== modalSelectedGoal)?.name || null;
-        }
-        sticky.player = name;
-        refreshModalCards();
-      });
-      goalList.appendChild(goalCard);
-
-      const assistCard = document.createElement("button");
-      assistCard.type = "button";
-      assistCard.className = "player-card" + (name === modalSelectedAssist ? " active" : "");
-      assistCard.dataset.player = name;
-      assistCard.innerHTML = `<span>${name}</span><span>${team || ''}</span>`;
-      assistCard.addEventListener('click', () => {
-        modalSelectedAssist = name;
-        if (modalSelectedGoal === modalSelectedAssist) {
-          modalSelectedGoal = currentPlayerPool.find(p => p.name !== modalSelectedAssist)?.name || null;
-          sticky.player = modalSelectedGoal || sticky.player;
-        }
-        refreshModalCards();
-      });
-      assistList.appendChild(assistCard);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "player-card";
+      card.dataset.player = name;
+      card.innerHTML = `<span>${name}</span><span>${team || ''}</span>`;
+      card.addEventListener('click', () => handlePlayerSelection(name));
+      list.appendChild(card);
     });
 
-    refreshModalCards();
+    refreshPlayerSelection();
   }
 
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
-  const focusTarget = goalList.querySelector('.player-card') || assistList.querySelector('.player-card') || saveButton;
+  const focusTarget = list.querySelector('.player-card') || saveButton;
   if (focusTarget) focusTarget.focus();
+}
+
+function handlePlayerSelection(name) {
+  if (!modalSelectedGoal || modalSelectedGoal === name && !modalSelectedAssist) {
+    modalSelectedGoal = name;
+    modalSelectedAssist = null;
+  } else if (!modalSelectedAssist && name !== modalSelectedGoal) {
+    modalSelectedAssist = name;
+  } else {
+    modalSelectedGoal = name;
+    modalSelectedAssist = null;
+  }
+  sticky.player = modalSelectedGoal;
+  refreshPlayerSelection();
 }
 
 function closeStatsModal() {
@@ -674,47 +658,19 @@ async function submitStatsFromModal() {
   closeStatsModal();
 }
 
-function refreshModalCards() {
-  updateModalPlayerCards('goalPlayerList', modalSelectedGoal);
-  updateModalPlayerCards('assistPlayerList', modalSelectedAssist);
-  updateSelectionSummary();
-}
-
-function updateModalPlayerCards(listId, activePlayer) {
-  const list = document.getElementById(listId);
+function refreshPlayerSelection() {
+  const list = document.getElementById("playerSelectionList");
   if (!list) return;
-  let hasActive = false;
   Array.from(list.querySelectorAll('.player-card')).forEach(card => {
-    card.classList.remove('active', 'goal', 'assist');
-    if (activePlayer && card.dataset.player === activePlayer) {
-      card.classList.add('active');
-      if (listId === 'goalPlayerList') {
-        card.classList.add('goal');
-      } else {
-        card.classList.add('assist');
-      }
-      hasActive = true;
-    } else {
-      card.classList.remove('active');
+    const name = card.dataset.player;
+    card.classList.remove('goal', 'assist', 'active');
+    if (modalSelectedGoal === name) {
+      card.classList.add('goal', 'active');
+    } else if (modalSelectedAssist === name) {
+      card.classList.add('assist', 'active');
     }
   });
-  if (!hasActive) {
-    const first = list.querySelector('.player-card');
-    if (first) {
-      if (listId === 'goalPlayerList') {
-        modalSelectedGoal = first.dataset.player;
-        sticky.player = modalSelectedGoal;
-      } else {
-        modalSelectedAssist = first.dataset.player;
-      }
-      first.classList.add('active');
-      if (listId === 'goalPlayerList') {
-        first.classList.add('goal');
-      } else {
-        first.classList.add('assist');
-      }
-    }
-  }
+  updateSelectionSummary();
 }
 
 function updateSelectionSummary() {
