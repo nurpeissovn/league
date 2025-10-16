@@ -58,7 +58,6 @@
     let rankingRows = [];
     let dateColumns = [];
     let sortDescending = true;
-    let latestSnapshotDate = "";
 
     async function loadRanking() {
       try {
@@ -103,7 +102,6 @@
         }
 
         dateColumns = Array.from(dateSet).sort();
-        latestSnapshotDate = dateColumns.length ? dateColumns[dateColumns.length - 1] : "";
 
         rankingRows = Array.from(allNames).map(name => {
           const player = playerByName.get(name);
@@ -141,7 +139,7 @@
         renderRanking();
       } catch (err) {
         const tbody = document.getElementById('tableBody');
-        const colspan = dateColumns.length + 4;
+        const colspan = dateColumns.length + 3;
         tbody.innerHTML = `<tr><td class="empty-state" colspan="${colspan}">Failed to load ranking: ${err.message || err}</td></tr>`;
       }
     }
@@ -156,14 +154,10 @@
     function renderRanking() {
       const headerRow = document.getElementById('tableHeader');
       const dateHeaders = dateColumns.map(date => `<th>${formatDate(date)}</th>`).join('');
-      const statusHeader = latestSnapshotDate
-        ? `<th>Status<br><span class="block text-xs text-slate-500 font-normal">${formatDate(latestSnapshotDate)}</span></th>`
-        : '<th>Status</th>';
       headerRow.innerHTML = `
         <th class="cursor-pointer" onclick="toggleSort()">${sortDescending ? '▼' : '▲'} Rank</th>
         <th class="text-left">Player</th>
         ${dateHeaders}
-        ${statusHeader}
         <th>Total</th>`;
 
       const tbody = document.getElementById('tableBody');
@@ -172,7 +166,7 @@
         : [...rankingRows].sort((a, b) => compareEntries(b, a));
 
       if (!ordered.length) {
-        const colspan = dateColumns.length + 4;
+        const colspan = dateColumns.length + 3;
         tbody.innerHTML = `<tr><td class="empty-state" colspan="${colspan}">No player data yet. Play some matches first!</td></tr>`;
         return;
       }
@@ -189,24 +183,16 @@
           if (stat) {
             return `<td>${stat.points}</td>`;
           }
+          if (status === 'active') {
+            return '<td>0</td>';
+          }
           return '<td></td>';
         }).join('');
-
-        let statusCellContent = '—';
-        if (latestSnapshotDate) {
-          const status = row.statuses ? row.statuses[latestSnapshotDate] : undefined;
-          if (status === 'missed') {
-            statusCellContent = '<span class="text-red-600 font-semibold">Missed</span>';
-          } else if (status === 'active') {
-            statusCellContent = '<span class="text-emerald-600 font-semibold">Active</span>';
-          }
-        }
 
         return `<tr class="${rowClass}">
           <td class="font-bold text-indigo-900">${rank}</td>
           <td class="font-semibold text-left text-indigo-800">${row.name}</td>
           ${cells}
-          <td>${statusCellContent}</td>
           <td class="font-bold text-indigo-900">${row.totalPoints}</td>
         </tr>`;
       }).join('');

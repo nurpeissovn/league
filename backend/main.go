@@ -454,7 +454,6 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 			MAX(ps.snapshot_date) AS last_snapshot
 		FROM players p
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
-		WHERE p.deleted = FALSE
 		GROUP BY p.id, p.name
 		ORDER BY total_points DESC, p.name ASC`
 
@@ -503,7 +502,6 @@ func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, e
 			p.name,
 			COALESCE(p.goals + p.assists, 0) AS total_points
 		FROM players p
-		WHERE p.deleted = FALSE
 		ORDER BY total_points DESC, p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query)
