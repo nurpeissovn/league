@@ -840,89 +840,38 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	err := execTx(ctx, db, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `
-			SELECT id, name, team_id, goals, assists
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
+			SELECT id, $1, goals, assists, goals + assists
 			FROM players
 			WHERE deleted = FALSE
-			ORDER BY id
-		`)
-		if err != nil {
-			return err
-		}
-		type playerSnapshot struct {
-			id      int
-			name    string
-			teamID  int
-			goals   int
-			assists int
-		}
-		var playersToSnapshot []playerSnapshot
-
-		for rows.Next() {
-			var p playerSnapshot
-			if err := rows.Scan(&p.id, &p.name, &p.teamID, &p.goals, &p.assists); err != nil {
-				return err
-			}
-			playersToSnapshot = append(playersToSnapshot, p)
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := rows.Close(); err != nil {
+			ON CONFLICT (player_id, snapshot_date)
+			DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
+				assists = player_stats.assists + EXCLUDED.assists,
+				points = player_stats.points + EXCLUDED.points
+		`, snapshotDate); err != nil {
 			return err
 		}
 
-		for _, p := range playersToSnapshot {
-			points := p.goals + p.assists
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
-				VALUES ($1, $2, $3, $4, $5)
-				ON CONFLICT (player_id, snapshot_date)
-				DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
-					assists = player_stats.assists + EXCLUDED.assists,
-					points = player_stats.points + EXCLUDED.points
-			`, p.id, snapshotDate, p.goals, p.assists, points); err != nil {
-				return err
-			}
-
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
-				VALUES ($1, $2, 'active', $3)
-				ON CONFLICT (player_name, team_id, snapshot_date)
-				DO UPDATE SET status = EXCLUDED.status
-			`, p.name, p.teamID, snapshotDate); err != nil {
-				return err
-			}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
+			SELECT name, team_id, 'active', $1
+			FROM players
+			WHERE deleted = FALSE
+			ON CONFLICT (player_name, team_id, snapshot_date)
+			DO UPDATE SET status = EXCLUDED.status
+		`, snapshotDate); err != nil {
+			return err
 		}
 
-		missedRows, err := tx.QueryContext(ctx, `
-			SELECT name, team_id
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
+			SELECT name, team_id, 'missed', $1
 			FROM players
 			WHERE deleted = TRUE
-		`)
-		if err != nil {
-			return err
-		}
-
-		for missedRows.Next() {
-			var name string
-			var teamID int
-			if err := missedRows.Scan(&name, &teamID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
-				VALUES ($1, $2, 'missed', $3)
-				ON CONFLICT (player_name, team_id, snapshot_date)
-				DO UPDATE SET status = EXCLUDED.status
-			`, name, teamID, snapshotDate); err != nil {
-				return err
-			}
-		}
-		if err := missedRows.Err(); err != nil {
-			return err
-		}
-		if err := missedRows.Close(); err != nil {
+			ON CONFLICT (player_name, team_id, snapshot_date)
+			DO UPDATE SET status = EXCLUDED.status
+		`, snapshotDate); err != nil {
 			return err
 		}
 
