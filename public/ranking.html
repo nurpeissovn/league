@@ -59,6 +59,22 @@
     let dateColumns = [];
     let sortDescending = true;
 
+    function normalizeDateStr(value) {
+      if (!value) return '';
+      if (value instanceof Date) {
+        return value.toISOString().slice(0, 10);
+      }
+      const str = String(value);
+      if (str.length >= 10) {
+        return str.slice(0, 10);
+      }
+      const parsed = new Date(str);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 10);
+      }
+      return str;
+    }
+
     async function loadRanking() {
       try {
         const [playersRes, rankingRes, snapshotRes] = await Promise.all([
@@ -84,7 +100,12 @@
         const allNames = new Set([...playerByName.keys(), ...rankingByName.keys()]);
         const dateSet = new Set();
 
-        ranking.forEach(entry => (entry.daily_stats || []).forEach(stat => stat?.date && dateSet.add(stat.date)));
+        ranking.forEach(entry => (entry.daily_stats || []).forEach(stat => {
+          if (!stat?.date) return;
+          const norm = normalizeDateStr(stat.date);
+          if (!norm) return;
+          dateSet.add(norm);
+        }));
 
         if (Array.isArray(snapshots)) {
           snapshots.forEach(snap => {
@@ -95,8 +116,10 @@
               map = new Map();
               snapshotsByPlayer.set(name, map);
             }
-            map.set(snap.snapshot_date, snap.status);
-            dateSet.add(snap.snapshot_date);
+            const normDate = normalizeDateStr(snap.snapshot_date);
+            if (!normDate) return;
+            map.set(normDate, snap.status);
+            dateSet.add(normDate);
             allNames.add(name);
           });
         }
@@ -112,10 +135,12 @@
           if (entry && Array.isArray(entry.daily_stats)) {
             entry.daily_stats.forEach(stat => {
               if (!stat?.date) return;
+              const normDate = normalizeDateStr(stat.date);
+              if (!normDate) return;
               const goals = Number(stat.goals || 0);
               const assists = Number(stat.assists || 0);
               const points = Number(stat.points || goals + assists);
-              statsByDate[stat.date] = { goals, assists, points };
+              statsByDate[normDate] = { goals, assists, points };
               totalPoints += points;
             });
           }
@@ -128,7 +153,9 @@
           const statusMap = snapshotsByPlayer.get(name);
           if (statusMap) {
             statusMap.forEach((status, date) => {
-              statuses[date] = status;
+              const normDate = normalizeDateStr(date);
+              if (!normDate) return;
+              statuses[normDate] = status;
             });
           }
 
