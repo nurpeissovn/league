@@ -849,8 +849,6 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-
 		type playerSnapshot struct {
 			id      int
 			name    string
@@ -868,6 +866,9 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			playersToSnapshot = append(playersToSnapshot, p)
 		}
 		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
 			return err
 		}
 
@@ -902,7 +903,6 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		defer missedRows.Close()
 
 		for missedRows.Next() {
 			var name string
@@ -920,6 +920,9 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := missedRows.Err(); err != nil {
+			return err
+		}
+		if err := missedRows.Close(); err != nil {
 			return err
 		}
 
