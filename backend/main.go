@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -37,6 +38,22 @@ type DeletePlayerReq struct {
 	Name   string `json:"name"`
 	TeamID int    `json:"team_id"`
 }
+
+type UpdatePlayerReq struct {
+	OldName string `json:"old_name"`
+	NewName string `json:"new_name"`
+	TeamID  int    `json:"team_id"`
+}
+
+type UpdateTeamReq struct {
+	OldName string `json:"old_name"`
+	NewName string `json:"new_name"`
+}
+
+var (
+	errNotFound       = errors.New("not found")
+	errInactivePlayer = errors.New("player is inactive")
+)
 
 func main() {
 	port := getenv("PORT", "3000")
@@ -72,11 +89,13 @@ func main() {
 	mux.Handle("/api/add-match", withJSON(db, addMatchHandler))
 	mux.Handle("/api/delete-match", withJSON(db, deleteMatchHandler))
 	mux.Handle("/api/add-player", withJSON(db, addPlayerHandler))
+	mux.Handle("/api/update-player", withJSON(db, updatePlayerHandler))
 	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
 	mux.Handle("/api/snapshot", withJSON(db, snapshotHandler))
 
 	// Team routes
 	mux.Handle("/api/add-team", withJSON(db, addTeamHandler))
+	mux.Handle("/api/update-team", withJSON(db, updateTeamHandler))
 	mux.HandleFunc("/api/list-teams", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -107,6 +126,13 @@ func main() {
 			return
 		}
 		getPlayerRanking(db, w, r)
+	})
+	mux.HandleFunc("/api/ranking-snapshots", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		listRankingSnapshotsHandler(db, w, r)
 	})
 
 	// static
@@ -139,6 +165,25 @@ func pingWithRetry(db *sql.DB, tries int, delay time.Duration) error {
 	return err
 }
 
+func execTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+			return
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			err = commitErr
+		}
+	}()
+
+	err = fn(tx)
+	return err
+}
+
 // ---- Team endpoints ----
 
 type AddTeamReq struct {
@@ -155,15 +200,20 @@ func addTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req AddTeamReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", 400)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
 		http.Error(w, "bad json or empty name", 400)
 		return
 	}
 	row := db.QueryRow(`
 		INSERT INTO teams (name) VALUES ($1)
-		ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+		ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
 		RETURNING id, name
-	`, req.Name)
+	`, name)
 	var t TeamDTO
 	if err := row.Scan(&t.ID, &t.Name); err != nil {
 		http.Error(w, err.Error(), 500)
@@ -197,6 +247,66 @@ func listTeamsHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
+func updateTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", http.StatusInternalServerError)
+		return
+	}
+
+	var req UpdateTeamReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	oldName := strings.TrimSpace(req.OldName)
+	newName := strings.TrimSpace(req.NewName)
+	if oldName == "" || newName == "" {
+		http.Error(w, "invalid team name", http.StatusBadRequest)
+		return
+	}
+
+	var updated TeamDTO
+	ctx := r.Context()
+	err := execTx(ctx, db, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `SELECT id FROM teams WHERE name = $1 FOR UPDATE`, oldName)
+		if err := row.Scan(&updated.ID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errNotFound
+			}
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE teams
+			SET name = $1,
+			    updated_at = NOW()
+			WHERE id = $2
+		`, newName, updated.ID); err != nil {
+			return err
+		}
+
+		updated.Name = newName
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errNotFound):
+			http.Error(w, "team not found", http.StatusNotFound)
+		default:
+			if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+				http.Error(w, "team name already exists", http.StatusConflict)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updated)
+}
+
 func runInitSQL(db *sql.DB, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -221,7 +331,7 @@ func listPlayersHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
-	rows, err := db.Query(`SELECT name, team_id, goals, assists FROM players ORDER BY (goals + assists) DESC, goals DESC`)
+	rows, err := db.Query(`SELECT name, team_id, goals, assists FROM players WHERE deleted = FALSE ORDER BY (goals + assists) DESC, goals DESC`)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -293,6 +403,13 @@ type rankingEntry struct {
 	LastSnapshot string             `json:"last_snapshot"`
 }
 
+type rankingSnapshotDTO struct {
+	PlayerName   string `json:"player_name"`
+	TeamID       int    `json:"team_id"`
+	Status       string `json:"status"`
+	SnapshotDate string `json:"snapshot_date"`
+}
+
 func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	if db == nil {
 		http.Error(w, "DB not configured", http.StatusInternalServerError)
@@ -337,6 +454,7 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 			MAX(ps.snapshot_date) AS last_snapshot
 		FROM players p
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
+		WHERE p.deleted = FALSE
 		GROUP BY p.id, p.name
 		ORDER BY total_points DESC, p.name ASC`
 
@@ -385,6 +503,7 @@ func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, e
 			p.name,
 			COALESCE(p.goals + p.assists, 0) AS total_points
 		FROM players p
+		WHERE p.deleted = FALSE
 		ORDER BY total_points DESC, p.name ASC`
 
 	rows, err := db.QueryContext(ctx, query)
@@ -408,6 +527,63 @@ func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, e
 	}
 
 	return rankings, nil
+}
+
+func listRankingSnapshotsHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	dateFilter := strings.TrimSpace(r.URL.Query().Get("date"))
+	var (
+		rows *sql.Rows
+		err  error
+	)
+
+	if dateFilter != "" {
+		if _, parseErr := time.Parse("2006-01-02", dateFilter); parseErr != nil {
+			http.Error(w, "invalid date", http.StatusBadRequest)
+			return
+		}
+		rows, err = db.QueryContext(ctx, `
+			SELECT player_name, team_id, status, snapshot_date
+			FROM ranking_snapshots
+			WHERE snapshot_date = $1
+			ORDER BY player_name
+		`, dateFilter)
+	} else {
+		rows, err = db.QueryContext(ctx, `
+			SELECT player_name, team_id, status, snapshot_date
+			FROM ranking_snapshots
+			ORDER BY snapshot_date, player_name
+		`)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var out []rankingSnapshotDTO
+	for rows.Next() {
+		var dto rankingSnapshotDTO
+		if err := rows.Scan(&dto.PlayerName, &dto.TeamID, &dto.Status, &dto.SnapshotDate); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out = append(out, dto)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // ---------- API handlers ----------
@@ -488,31 +664,26 @@ func addPlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", 400)
 		return
 	}
-	if req.TeamID == 0 || strings.TrimSpace(req.Name) == "" {
+	name := strings.TrimSpace(req.Name)
+	if req.TeamID == 0 || name == "" {
 		http.Error(w, "invalid player", 400)
 		return
 	}
-	ctx := context.Background()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx, `
+	ctx := r.Context()
+	err := execTx(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO players (name, team_id, goals, assists)
 		VALUES ($1,$2,$3,$4)
 		ON CONFLICT (name, team_id)
-		DO UPDATE SET goals = EXCLUDED.goals, assists = EXCLUDED.assists
-	`, req.Name, req.TeamID, req.Goals, req.Assists)
+		DO UPDATE SET goals = EXCLUDED.goals,
+			assists = EXCLUDED.assists,
+			deleted = FALSE,
+			updated_at = NOW()
+	`, name, req.TeamID, req.Goals, req.Assists)
+		return err
+	})
 	if err != nil {
 		http.Error(w, "db error: "+err.Error(), 500)
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), 500)
 		return
 	}
 
@@ -530,16 +701,109 @@ func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", 400)
 		return
 	}
-	if req.TeamID == 0 || strings.TrimSpace(req.Name) == "" {
+	name := strings.TrimSpace(req.Name)
+	if req.TeamID == 0 || name == "" {
 		http.Error(w, "invalid player", 400)
 		return
 	}
 
-	_, err := db.ExecContext(r.Context(),
-		`DELETE FROM players WHERE name = $1 AND team_id = $2`,
-		req.Name, req.TeamID)
+	res, err := db.ExecContext(r.Context(),
+		`UPDATE players
+		SET deleted = TRUE,
+			updated_at = NOW()
+		WHERE name = $1 AND team_id = $2 AND deleted = FALSE`,
+		name, req.TeamID)
 	if err != nil {
 		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	if affected == 0 {
+		http.Error(w, "player not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+func updatePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", http.StatusInternalServerError)
+		return
+	}
+
+	var req UpdatePlayerReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	oldName := strings.TrimSpace(req.OldName)
+	newName := strings.TrimSpace(req.NewName)
+	if req.TeamID == 0 || oldName == "" || newName == "" {
+		http.Error(w, "invalid player", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	err := execTx(ctx, db, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `
+			SELECT id, deleted
+			FROM players
+			WHERE name = $1 AND team_id = $2
+			FOR UPDATE
+		`, oldName, req.TeamID)
+
+		var (
+			playerID int
+			deleted  bool
+		)
+		if err := row.Scan(&playerID, &deleted); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errNotFound
+			}
+			return err
+		}
+		if deleted {
+			return errInactivePlayer
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE players
+			SET name = $1,
+				updated_at = NOW()
+			WHERE id = $2
+		`, newName, playerID); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE ranking_snapshots
+			SET player_name = $1
+			WHERE player_name = $2 AND team_id = $3
+		`, newName, oldName, req.TeamID); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errNotFound):
+			http.Error(w, "player not found", http.StatusNotFound)
+		case errors.Is(err, errInactivePlayer):
+			http.Error(w, "player is inactive", http.StatusBadRequest)
+		default:
+			if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+				http.Error(w, "player name already exists", http.StatusConflict)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		}
 		return
 	}
 
@@ -575,66 +839,107 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	snapshotDate := snapshotTime.Format("2006-01-02")
 
 	ctx := r.Context()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.QueryContext(ctx, `SELECT id, goals, assists FROM players ORDER BY id`)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	type playerSnapshot struct {
-		id      int
-		goals   int
-		assists int
-	}
-	var playersToSnapshot []playerSnapshot
-
-	for rows.Next() {
-		var p playerSnapshot
-		if err := rows.Scan(&p.id, &p.goals, &p.assists); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+	err := execTx(ctx, db, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id, name, team_id, goals, assists
+			FROM players
+			WHERE deleted = FALSE
+			ORDER BY id
+		`)
+		if err != nil {
+			return err
 		}
-		playersToSnapshot = append(playersToSnapshot, p)
-	}
-	if err := rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+		defer rows.Close()
 
-	for _, p := range playersToSnapshot {
-		points := p.goals + p.assists
+		type playerSnapshot struct {
+			id      int
+			name    string
+			teamID  int
+			goals   int
+			assists int
+		}
+		var playersToSnapshot []playerSnapshot
+
+		for rows.Next() {
+			var p playerSnapshot
+			if err := rows.Scan(&p.id, &p.name, &p.teamID, &p.goals, &p.assists); err != nil {
+				return err
+			}
+			playersToSnapshot = append(playersToSnapshot, p)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, p := range playersToSnapshot {
+			points := p.goals + p.assists
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
+				VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT (player_id, snapshot_date)
+				DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
+					assists = player_stats.assists + EXCLUDED.assists,
+					points = player_stats.points + EXCLUDED.points
+			`, p.id, snapshotDate, p.goals, p.assists, points); err != nil {
+				return err
+			}
+
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
+				VALUES ($1, $2, 'active', $3)
+				ON CONFLICT (player_name, team_id, snapshot_date)
+				DO UPDATE SET status = EXCLUDED.status
+			`, p.name, p.teamID, snapshotDate); err != nil {
+				return err
+			}
+		}
+
+		missedRows, err := tx.QueryContext(ctx, `
+			SELECT name, team_id
+			FROM players
+			WHERE deleted = TRUE
+		`)
+		if err != nil {
+			return err
+		}
+		defer missedRows.Close()
+
+		for missedRows.Next() {
+			var name string
+			var teamID int
+			if err := missedRows.Scan(&name, &teamID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
+				VALUES ($1, $2, 'missed', $3)
+				ON CONFLICT (player_name, team_id, snapshot_date)
+				DO UPDATE SET status = EXCLUDED.status
+			`, name, teamID, snapshotDate); err != nil {
+				return err
+			}
+		}
+		if err := missedRows.Err(); err != nil {
+			return err
+		}
+
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (player_id, snapshot_date)
-			DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
-				assists = player_stats.assists + EXCLUDED.assists,
-				points = player_stats.points + EXCLUDED.points
-		`, p.id, snapshotDate, p.goals, p.assists, points); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			UPDATE players
+			SET goals = 0,
+				assists = 0,
+				updated_at = NOW()
+			WHERE deleted = FALSE
+		`); err != nil {
+			return err
 		}
-	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE players SET goals = 0, assists = 0`); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM matches`); err != nil {
+			return err
+		}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM matches`); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
+		return nil
+	})
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

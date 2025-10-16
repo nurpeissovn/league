@@ -14,6 +14,10 @@
     table { width: 100%; border-collapse: collapse; margin-top: 10px;}
     th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
     th { background: #f9f9f9; }
+    .player-row, .inline-edit { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+    .player-row { margin-bottom: 4px; }
+    .inline-edit input { flex: 1 1 140px; min-width: 120px; }
+    .inline-edit button, .player-row button { margin-left: 0; }
   </style>
 </head>
 <body>
@@ -45,43 +49,78 @@
   </div>
 
   <script>
-    const teams = {}; // { teamName: { id: number, players: [names] } }
-  
+    const teams = new Map();
+    const editState = {
+      teamId: null,
+      player: null
+    };
+
+    function escapeHtml(value) {
+      return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function playerInputId(teamId, index) {
+      return `player-edit-${teamId}-${index}`;
+    }
+
     async function loadTeamsFromDB() {
       try {
-        const res = await fetch("/api/list-teams");
-        if (!res.ok) return;
-        const dbTeams = await res.json(); // [{id, name}]
-        
-        for (const t of dbTeams) {
-          teams[t.name] = { id: t.id, players: [] };
+        const [teamRes, playerRes] = await Promise.all([
+          fetch("/api/list-teams"),
+          fetch("/api/players")
+        ]);
+
+        if (!teamRes.ok) {
+          console.error("Failed to load teams:", await teamRes.text());
+          return;
         }
-        
-        // Load players
-        const resP = await fetch("/api/players");
-        if (resP.ok) {
-          const dbPlayers = await resP.json(); // [{name, team_id, goals, assists}]
+
+        const dbTeams = await teamRes.json();
+        teams.clear();
+        for (const t of dbTeams) {
+          teams.set(t.id, { id: t.id, name: t.name, players: [] });
+        }
+
+        if (playerRes.ok) {
+          const dbPlayers = await playerRes.json();
           for (const p of dbPlayers) {
-            const teamEntry = Object.values(teams).find(t => t.id === p.team_id);
-            if (teamEntry) {
-              const teamName = Object.keys(teams).find(k => teams[k].id === p.team_id);
-              teamEntry.players.push(p.name);
+            const team = teams.get(p.team_id);
+            if (team) {
+              team.players.push(p.name);
             }
           }
+        } else {
+          console.warn("Failed to load players:", await playerRes.text());
         }
-        
+
+        teams.forEach(team => team.players.sort((a, b) => a.localeCompare(b)));
+
+        editState.teamId = null;
+        editState.player = null;
+
         renderDropdowns();
         renderTable();
       } catch (e) {
         console.error("Failed to load teams:", e);
       }
     }
-  
+
     async function addTeam() {
-      const name = document.getElementById("teamName").value.trim();
+      const input = document.getElementById("teamName");
+      const name = input.value.trim();
       if (!name) return alert("Enter team name!");
-      if (teams[name]) return alert("Team already exists!");
-  
+
+      const exists = Array.from(teams.values()).some(t => t.name.toLowerCase() === name.toLowerCase());
+      if (exists) {
+        alert("Team already exists!");
+        return;
+      }
+
       try {
         const res = await fetch("/api/add-team", {
           method: "POST",
@@ -93,9 +132,9 @@
           alert("Failed to add team: " + msg);
           return;
         }
-        const data = await res.json(); // { id, name }
-        teams[name] = { id: data.id, players: [] };
-        document.getElementById("teamName").value = "";
+        const data = await res.json();
+        teams.set(data.id, { id: data.id, name: data.name, players: [] });
+        input.value = "";
         renderDropdowns();
         renderTable();
       } catch (e) {
@@ -103,23 +142,34 @@
         alert("Network error while adding team");
       }
     }
-  
+
     async function addPlayer() {
-      const name = document.getElementById("playerName").value.trim();
-      const teamName = document.getElementById("playerTeam").value;
+      const nameInput = document.getElementById("playerName");
+      const select = document.getElementById("playerTeam");
+      const name = nameInput.value.trim();
+      const teamId = Number(select.value);
       if (!name) return alert("Enter player name!");
-      if (!teamName) return alert("Select team!");
+      if (!teamId) return alert("Select team!");
+
+      const team = teams.get(teamId);
+      if (!team) {
+        alert("Selected team no longer exists. Refreshing list.");
+        await loadTeamsFromDB();
+        return;
+      }
       
-      const team = teams[teamName];
-      if (team.players.includes(name)) return alert("Player already exists in this team!");
+      if (team.players.includes(name)) {
+        alert("Player already exists in this team!");
+        return;
+      }
       
       try {
         const res = await fetch("/api/add-player", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
-            name: name,
-            team_id: team.id,
+            name,
+            team_id: teamId,
             goals: 0,
             assists: 0
           })
@@ -132,16 +182,21 @@
         }
         
         team.players.push(name);
-        document.getElementById("playerName").value = "";
+        team.players.sort((a, b) => a.localeCompare(b));
+        nameInput.value = "";
         renderTable();
       } catch (e) {
         console.error(e);
         alert("Network error while adding player");
       }
     }
-  
-    async function removePlayer(teamName, playerName) {
-      if (!confirm(`Remove ${playerName} from ${teamName}?`)) return;
+
+    async function removePlayer(teamId, encodedName) {
+      const team = teams.get(teamId);
+      if (!team) return;
+
+      const playerName = decodeURIComponent(encodedName);
+      if (!confirm(`Remove ${playerName} from ${team.name}?`)) return;
       
       try {
         const res = await fetch("/api/delete-player", {
@@ -149,39 +204,198 @@
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
             name: playerName,
-            team_id: teams[teamName].id
+            team_id: teamId
           })
         });
         
         if (!res.ok) {
-          alert("Failed to remove player");
+          const msg = await res.text();
+          alert("Failed to remove player: " + msg);
           return;
         }
         
-        teams[teamName].players = teams[teamName].players.filter(p => p !== playerName);
+        team.players = team.players.filter(p => p !== playerName);
         renderTable();
       } catch (e) {
         console.error(e);
         alert("Network error while removing player");
       }
     }
-  
+
     function renderDropdowns() {
       const select = document.getElementById("playerTeam");
+      if (!select) return;
+
+      const previous = select.value;
       select.innerHTML = "";
-      for (const t in teams) {
-        select.innerHTML += `<option value="${t}">${t}</option>`;
+      const sortedTeams = Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name));
+      for (const team of sortedTeams) {
+        const option = document.createElement("option");
+        option.value = String(team.id);
+        option.textContent = team.name;
+        select.appendChild(option);
+      }
+
+      if (previous && teams.has(Number(previous))) {
+        select.value = previous;
       }
     }
   
     function renderTable() {
       const tbody = document.querySelector("#regTable tbody");
+      if (!tbody) return;
+
       tbody.innerHTML = "";
-      for (const t in teams) {
-        const players = teams[t].players.map(p => 
-          `${p} <button onclick="removePlayer('${t}','${p}')">Remove</button>`
-        ).join("<br>");
-        tbody.innerHTML += `<tr><td>${t}</td><td>${players || "No players"}</td><td>-</td></tr>`;
+      const sortedTeams = Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name));
+      for (const team of sortedTeams) {
+        const teamNameEsc = escapeHtml(team.name);
+        const isEditingTeam = editState.teamId === team.id;
+
+        const teamCell = isEditingTeam
+          ? `<div class="inline-edit">
+              <input id="team-edit-${team.id}" value="${teamNameEsc}">
+              <button onclick="saveTeamName(${team.id})">Save</button>
+              <button onclick="cancelTeamEdit()">Cancel</button>
+            </div>`
+          : `<div class="inline-edit">
+              <span>${teamNameEsc}</span>
+              <button onclick="startEditTeam(${team.id})">✏️ Edit</button>
+            </div>`;
+
+        const playerCells = team.players.length
+          ? team.players.map((playerName, index) => {
+              const displayName = escapeHtml(playerName);
+              if (editState.player && editState.player.teamId === team.id && editState.player.index === index) {
+                const inputId = playerInputId(team.id, index);
+                return `<div class="player-row">
+                    <input id="${inputId}" value="${displayName}">
+                    <button onclick="savePlayerName(${team.id}, ${index})">Save</button>
+                    <button onclick="cancelPlayerEdit()">Cancel</button>
+                  </div>`;
+              }
+              const encodedName = encodeURIComponent(playerName);
+              return `<div class="player-row">
+                  <span>${displayName}</span>
+                  <button onclick="startEditPlayer(${team.id}, ${index})">✏️ Edit</button>
+                  <button onclick="removePlayer(${team.id}, '${encodedName}')">Remove</button>
+                </div>`;
+            }).join("")
+          : "<span>No players</span>";
+
+        tbody.innerHTML += `<tr>
+          <td>${teamCell}</td>
+          <td>${playerCells}</td>
+          <td>-</td>
+        </tr>`;
+      }
+    }
+
+    function startEditTeam(teamId) {
+      editState.teamId = teamId;
+      editState.player = null;
+      renderTable();
+    }
+
+    function cancelTeamEdit() {
+      editState.teamId = null;
+      renderTable();
+    }
+
+    async function saveTeamName(teamId) {
+      const team = teams.get(teamId);
+      if (!team) return;
+
+      const input = document.getElementById(`team-edit-${teamId}`);
+      if (!input) return;
+
+      const newName = input.value.trim();
+      if (!newName) {
+        alert("Enter team name!");
+        return;
+      }
+
+      if (newName === team.name) {
+        cancelTeamEdit();
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/update-team", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            old_name: team.name,
+            new_name: newName
+          })
+        });
+        if (!res.ok) {
+          const msg = await res.text();
+          alert("Failed to update team: " + msg);
+          return;
+        }
+        await loadTeamsFromDB();
+      } catch (e) {
+        console.error(e);
+        alert("Network error while updating team");
+      }
+    }
+
+    function startEditPlayer(teamId, index) {
+      editState.teamId = null;
+      editState.player = { teamId, index };
+      renderTable();
+    }
+
+    function cancelPlayerEdit() {
+      editState.player = null;
+      renderTable();
+    }
+
+    async function savePlayerName(teamId, index) {
+      const team = teams.get(teamId);
+      if (!team) return;
+
+      const input = document.getElementById(playerInputId(teamId, index));
+      if (!input) return;
+
+      const oldName = team.players[index];
+      if (!oldName) {
+        cancelPlayerEdit();
+        return;
+      }
+
+      const newName = input.value.trim();
+      if (!newName) {
+        alert("Enter player name!");
+        return;
+      }
+
+      if (newName === oldName) {
+        cancelPlayerEdit();
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/update-player", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            old_name: oldName,
+            new_name: newName,
+            team_id: teamId
+          })
+        });
+
+        if (!res.ok) {
+          const msg = await res.text();
+          alert("Failed to update player: " + msg);
+          return;
+        }
+
+        await loadTeamsFromDB();
+      } catch (e) {
+        console.error(e);
+        alert("Network error while updating player");
       }
     }
   

@@ -58,26 +58,52 @@
     let rankingRows = [];
     let dateColumns = [];
     let sortDescending = true;
+    let latestSnapshotDate = "";
 
     async function loadRanking() {
       try {
-        const [playersRes, rankingRes] = await Promise.all([
+        const [playersRes, rankingRes, snapshotRes] = await Promise.all([
           fetch('/api/players'),
-          fetch('/ranking')
+          fetch('/ranking'),
+          fetch('/api/ranking-snapshots')
         ]);
 
         if (!playersRes.ok) throw new Error(await playersRes.text());
 
         const players = await playersRes.json();
         const ranking = rankingRes.ok ? await rankingRes.json() : [];
+        let snapshots = [];
+        if (snapshotRes.ok) {
+          snapshots = await snapshotRes.json();
+        } else {
+          console.warn('Failed to load ranking snapshots:', await snapshotRes.text());
+        }
 
         const rankingByName = new Map(ranking.map(entry => [entry.name, entry]));
         const playerByName = new Map(players.map(p => [p.name, p]));
+        const snapshotsByPlayer = new Map();
         const allNames = new Set([...playerByName.keys(), ...rankingByName.keys()]);
-
         const dateSet = new Set();
+
         ranking.forEach(entry => (entry.daily_stats || []).forEach(stat => stat?.date && dateSet.add(stat.date)));
+
+        if (Array.isArray(snapshots)) {
+          snapshots.forEach(snap => {
+            if (!snap?.player_name || !snap?.snapshot_date) return;
+            const name = snap.player_name;
+            let map = snapshotsByPlayer.get(name);
+            if (!map) {
+              map = new Map();
+              snapshotsByPlayer.set(name, map);
+            }
+            map.set(snap.snapshot_date, snap.status);
+            dateSet.add(snap.snapshot_date);
+            allNames.add(name);
+          });
+        }
+
         dateColumns = Array.from(dateSet).sort();
+        latestSnapshotDate = dateColumns.length ? dateColumns[dateColumns.length - 1] : "";
 
         rankingRows = Array.from(allNames).map(name => {
           const player = playerByName.get(name);
@@ -100,14 +126,23 @@
             totalPoints = player.goals + player.assists;
           }
 
-          return { name, statsByDate, totalPoints };
+          const statuses = {};
+          const statusMap = snapshotsByPlayer.get(name);
+          if (statusMap) {
+            statusMap.forEach((status, date) => {
+              statuses[date] = status;
+            });
+          }
+
+          return { name, statsByDate, totalPoints, statuses };
         });
 
         rankingRows.sort(compareEntries);
         renderRanking();
       } catch (err) {
         const tbody = document.getElementById('tableBody');
-        tbody.innerHTML = `<tr><td class="empty-state" colspan="${dateColumns.length + 3}">Failed to load ranking: ${err.message || err}</td></tr>`;
+        const colspan = dateColumns.length + 4;
+        tbody.innerHTML = `<tr><td class="empty-state" colspan="${colspan}">Failed to load ranking: ${err.message || err}</td></tr>`;
       }
     }
 
@@ -121,10 +156,14 @@
     function renderRanking() {
       const headerRow = document.getElementById('tableHeader');
       const dateHeaders = dateColumns.map(date => `<th>${formatDate(date)}</th>`).join('');
+      const statusHeader = latestSnapshotDate
+        ? `<th>Status<br><span class="block text-xs text-slate-500 font-normal">${formatDate(latestSnapshotDate)}</span></th>`
+        : '<th>Status</th>';
       headerRow.innerHTML = `
         <th class="cursor-pointer" onclick="toggleSort()">${sortDescending ? '▼' : '▲'} Rank</th>
         <th class="text-left">Player</th>
         ${dateHeaders}
+        ${statusHeader}
         <th>Total</th>`;
 
       const tbody = document.getElementById('tableBody');
@@ -133,7 +172,8 @@
         : [...rankingRows].sort((a, b) => compareEntries(b, a));
 
       if (!ordered.length) {
-        tbody.innerHTML = `<tr><td class="empty-state" colspan="${dateColumns.length + 3}">No player data yet. Play some matches first!</td></tr>`;
+        const colspan = dateColumns.length + 4;
+        tbody.innerHTML = `<tr><td class="empty-state" colspan="${colspan}">No player data yet. Play some matches first!</td></tr>`;
         return;
       }
 
@@ -141,14 +181,32 @@
         const rank = index + 1;
         const rowClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'bg-white';
         const cells = dateColumns.map(date => {
-          const stat = row.statsByDate[date] || { points: 0 };
-          return `<td>${stat.points}</td>`;
+          const status = row.statuses ? row.statuses[date] : undefined;
+          if (status === 'missed') {
+            return `<td class="text-red-600 font-semibold">Missed</td>`;
+          }
+          const stat = row.statsByDate[date];
+          if (stat) {
+            return `<td>${stat.points}</td>`;
+          }
+          return '<td></td>';
         }).join('');
+
+        let statusCellContent = '—';
+        if (latestSnapshotDate) {
+          const status = row.statuses ? row.statuses[latestSnapshotDate] : undefined;
+          if (status === 'missed') {
+            statusCellContent = '<span class="text-red-600 font-semibold">Missed</span>';
+          } else if (status === 'active') {
+            statusCellContent = '<span class="text-emerald-600 font-semibold">Active</span>';
+          }
+        }
 
         return `<tr class="${rowClass}">
           <td class="font-bold text-indigo-900">${rank}</td>
           <td class="font-semibold text-left text-indigo-800">${row.name}</td>
           ${cells}
+          <td>${statusCellContent}</td>
           <td class="font-bold text-indigo-900">${row.totalPoints}</td>
         </tr>`;
       }).join('');
