@@ -204,7 +204,7 @@
         const cells = dateColumns.map(date => {
           const status = row.statuses ? row.statuses[date] : undefined;
           if (status === 'missed') {
-            return `<td class="text-red-600 font-semibold">Missed</td>`;
+            return `<td class="text-red-600 font-semibold">–</td>`;
           }
           const stat = row.statsByDate[date];
           if (stat) {
