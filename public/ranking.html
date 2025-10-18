@@ -124,7 +124,16 @@
           });
         }
 
-        dateColumns = Array.from(dateSet).sort();
+        const omitDates = new Set(['10-06', '10-13']);
+        dateColumns = Array.from(dateSet)
+          .sort()
+          .filter(date => {
+            if (!date) return false;
+            const normalized = normalizeDateStr(date);
+            if (!normalized || normalized.length < 10) return true;
+            const dayMonth = normalized.slice(5);
+            return !omitDates.has(dayMonth);
+          });
 
         rankingRows = Array.from(allNames).map(name => {
           const player = playerByName.get(name);
