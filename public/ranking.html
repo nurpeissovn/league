@@ -124,16 +124,7 @@
           });
         }
 
-        const omitDates = new Set(['10-06', '10-13']);
-        dateColumns = Array.from(dateSet)
-          .sort()
-          .filter(date => {
-            if (!date) return false;
-            const normalized = normalizeDateStr(date);
-            if (!normalized || normalized.length < 10) return true;
-            const dayMonth = normalized.slice(5);
-            return !omitDates.has(dayMonth);
-          });
+        dateColumns = Array.from(dateSet).sort();
 
         rankingRows = Array.from(allNames).map(name => {
           const player = playerByName.get(name);
@@ -213,16 +204,13 @@
         const cells = dateColumns.map(date => {
           const status = row.statuses ? row.statuses[date] : undefined;
           if (status === 'missed') {
-            return `<td class="text-red-600 font-semibold">–</td>`;
+            return `<td class="text-red-600 font-semibold">-</td>`;
           }
           const stat = row.statsByDate[date];
           if (stat) {
             return `<td>${stat.points}</td>`;
           }
-          if (status === 'active') {
-            return '<td>0</td>';
-          }
-          return '<td></td>';
+          return '<td class="text-slate-400">-</td>';
         }).join('');
 
         return `<tr class="${rowClass}">
