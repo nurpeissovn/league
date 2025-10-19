@@ -443,14 +443,14 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 						'date', ps.snapshot_date,
 						'goals', ps.goals,
 						'assists', ps.assists,
-						'points', ps.points
+						'points', ps.goals + ps.assists
 					)
 					ORDER BY ps.snapshot_date
 				)
 				FILTER (WHERE ps.snapshot_date IS NOT NULL),
 				'[]'::json
 			) AS daily_stats,
-			COALESCE(SUM(ps.points), 0) AS total_points,
+			COALESCE(SUM(ps.goals + ps.assists), 0) AS total_points,
 			MAX(ps.snapshot_date) AS last_snapshot
 		FROM players p
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
