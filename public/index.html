@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>League Tracker</title>
+<script src="/auth.js"></script>
 <style>
 body { font-family: Arial; background: #f0f4ff; padding: 20px; position: relative; overflow-x: hidden; }
 h1 { text-align: center; }
@@ -279,6 +280,13 @@ th { background: #f9f9f9; }
 </head>
 <body>
 <h1>⚽ League Tracker</h1>
+<div class="card" id="leagueBanner" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+  <div>
+    <div style="font-size:0.9rem; color:#6b7280;">Current league</div>
+    <div id="leagueName" style="font-weight:700; font-size:1.1rem;">Loading…</div>
+  </div>
+  <button class="btn-base btn-neutral" type="button" onclick="switchLeague()"><span class="icon">🔑</span>Switch</button>
+</div>
 
 <div class="card">
   <h2>Enter Match Result</h2>
@@ -405,11 +413,30 @@ let currentPlayerPool = [];
 let modalSelectedGoal = null;
 let modalSelectedAssist = null;
 let pendingResetDate = null;
+const activeLeague = window.LeagueAuth?.requireLeague();
+const apiFetch = (...args) => window.LeagueAuth ? window.LeagueAuth.leagueFetch(...args) : fetch(...args);
+
+function setLeagueLabel() {
+  const label = document.getElementById("leagueName");
+  if (label && activeLeague?.name) {
+    label.textContent = activeLeague.name;
+  } else if (label) {
+    label.textContent = "Unknown league";
+  }
+}
+
+function switchLeague() {
+  window.LeagueAuth?.clearLeague();
+  const next = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `/login.html?next=${next}`;
+}
+
+setLeagueLabel();
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
     try {
-      const response = await fetch(url);
+      const response = await apiFetch(url);
       if (response.ok) return response;
     } catch(e) {}
     if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
@@ -512,7 +539,7 @@ async function resetDashboard(chosenDateIso) {
       await loadPromise;
     }
     const snapshotAt = chosenDateIso || new Date().toISOString();
-    const res = await fetch("/api/snapshot", {
+    const res = await apiFetch("/api/snapshot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ snapshot_at: snapshotAt })
@@ -580,7 +607,7 @@ async function handleSubmit() {
   sticky.team2 = t2;
 
   try {
-    const res = await fetch("/api/add-match", {
+    const res = await apiFetch("/api/add-match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -618,7 +645,7 @@ async function undoLastMatch() {
   if (!confirm(`Undo last match: ${last.t1} ${last.s1} - ${last.s2} ${last.t2}?`)) return;
 
   try {
-    const res = await fetch("/api/delete-match", {
+    const res = await apiFetch("/api/delete-match", {
       method: "POST",
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ id: last.id })
@@ -670,7 +697,7 @@ async function recordPlayerStats(playerName, goalsDelta, assistsDelta) {
   const newAssists = player.assists + assistsDelta;
 
   try {
-    const res = await fetch("/api/add-player", {
+    const res = await apiFetch("/api/add-player", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -50,6 +50,8 @@ type UpdateTeamReq struct {
 	NewName string `json:"new_name"`
 }
 
+const defaultLeagueSlug = "default"
+
 var (
 	errNotFound       = errors.New("not found")
 	errInactivePlayer = errors.New("player is inactive")
@@ -184,6 +186,24 @@ func execTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) (err error)
 	return err
 }
 
+func leagueFromRequest(r *http.Request) string {
+	raw := strings.TrimSpace(r.Header.Get("X-League-Slug"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("league"))
+	}
+	raw = strings.ToLower(raw)
+	var b strings.Builder
+	for _, ch := range raw {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			b.WriteRune(ch)
+		}
+	}
+	if b.Len() == 0 {
+		return defaultLeagueSlug
+	}
+	return b.String()
+}
+
 // ---- Team endpoints ----
 
 type AddTeamReq struct {
@@ -205,15 +225,16 @@ func addTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(req.Name)
+	league := leagueFromRequest(r)
 	if name == "" {
 		http.Error(w, "bad json or empty name", 400)
 		return
 	}
 	row := db.QueryRow(`
-		INSERT INTO teams (name) VALUES ($1)
-		ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
+		INSERT INTO teams (name, league_slug) VALUES ($1, $2)
+		ON CONFLICT (name, league_slug) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
 		RETURNING id, name
-	`, name)
+	`, name, league)
 	var t TeamDTO
 	if err := row.Scan(&t.ID, &t.Name); err != nil {
 		http.Error(w, err.Error(), 500)
@@ -228,7 +249,8 @@ func listTeamsHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
-	rows, err := db.Query(`SELECT id, name FROM teams ORDER BY name`)
+	league := leagueFromRequest(r)
+	rows, err := db.Query(`SELECT id, name FROM teams WHERE league_slug = $1 ORDER BY name`, league)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -261,6 +283,7 @@ func updateTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	oldName := strings.TrimSpace(req.OldName)
 	newName := strings.TrimSpace(req.NewName)
+	league := leagueFromRequest(r)
 	if oldName == "" || newName == "" {
 		http.Error(w, "invalid team name", http.StatusBadRequest)
 		return
@@ -269,7 +292,7 @@ func updateTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	var updated TeamDTO
 	ctx := r.Context()
 	err := execTx(ctx, db, func(tx *sql.Tx) error {
-		row := tx.QueryRowContext(ctx, `SELECT id FROM teams WHERE name = $1 FOR UPDATE`, oldName)
+		row := tx.QueryRowContext(ctx, `SELECT id FROM teams WHERE name = $1 AND league_slug = $2 FOR UPDATE`, oldName, league)
 		if err := row.Scan(&updated.ID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return errNotFound
@@ -281,8 +304,8 @@ func updateTeamHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			UPDATE teams
 			SET name = $1,
 			    updated_at = NOW()
-			WHERE id = $2
-		`, newName, updated.ID); err != nil {
+			WHERE id = $2 AND league_slug = $3
+		`, newName, updated.ID, league); err != nil {
 			return err
 		}
 
@@ -331,7 +354,14 @@ func listPlayersHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
-	rows, err := db.Query(`SELECT name, team_id, goals, assists FROM players WHERE deleted = FALSE ORDER BY (goals + assists) DESC, goals DESC`)
+	league := leagueFromRequest(r)
+	rows, err := db.Query(`
+		SELECT p.name, p.team_id, p.goals, p.assists
+		FROM players p
+		JOIN teams t ON p.team_id = t.id
+		WHERE t.league_slug = $1 AND p.deleted = FALSE
+		ORDER BY (p.goals + p.assists) DESC, p.goals DESC
+	`, league)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -362,7 +392,15 @@ func listMatchesHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
-	rows, err := db.Query(`SELECT id, team1_id, team2_id, score1, score2, played_at FROM matches ORDER BY played_at ASC`)
+	league := leagueFromRequest(r)
+	rows, err := db.Query(`
+		SELECT m.id, m.team1_id, m.team2_id, m.score1, m.score2, m.played_at
+		FROM matches m
+		JOIN teams t1 ON m.team1_id = t1.id
+		JOIN teams t2 ON m.team2_id = t2.id
+		WHERE t1.league_slug = $1 AND t2.league_slug = $1
+		ORDER BY m.played_at ASC
+	`, league)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -416,10 +454,12 @@ func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rankings, err := fetchRankingFromPlayerStats(r.Context(), db)
+	league := leagueFromRequest(r)
+
+	rankings, err := fetchRankingFromPlayerStats(r.Context(), db, league)
 	if err != nil {
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "42P01" {
-			rankings, err = fetchRankingFromPlayers(r.Context(), db)
+			rankings, err = fetchRankingFromPlayers(r.Context(), db, league)
 		}
 	}
 	if err != nil {
@@ -433,7 +473,7 @@ func getPlayerRanking(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntry, error) {
+func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB, league string) ([]rankingEntry, error) {
 	const query = `
 		SELECT
 			p.name,
@@ -453,11 +493,13 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 			COALESCE(SUM(ps.goals + ps.assists), 0) AS total_points,
 			MAX(ps.snapshot_date) AS last_snapshot
 		FROM players p
+		JOIN teams t ON p.team_id = t.id
 		LEFT JOIN player_stats ps ON p.id = ps.player_id
+		WHERE t.league_slug = $1
 		GROUP BY p.id, p.name
 		ORDER BY total_points DESC, p.name ASC`
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, query, league)
 	if err != nil {
 		return nil, err
 	}
@@ -496,15 +538,17 @@ func fetchRankingFromPlayerStats(ctx context.Context, db *sql.DB) ([]rankingEntr
 	return rankings, nil
 }
 
-func fetchRankingFromPlayers(ctx context.Context, db *sql.DB) ([]rankingEntry, error) {
+func fetchRankingFromPlayers(ctx context.Context, db *sql.DB, league string) ([]rankingEntry, error) {
 	const query = `
 		SELECT
 			p.name,
 			COALESCE(p.goals + p.assists, 0) AS total_points
 		FROM players p
+		JOIN teams t ON p.team_id = t.id
+		WHERE t.league_slug = $1
 		ORDER BY total_points DESC, p.name ASC`
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, query, league)
 	if err != nil {
 		return nil, err
 	}
@@ -535,6 +579,7 @@ func listRankingSnapshotsHandler(db *sql.DB, w http.ResponseWriter, r *http.Requ
 
 	ctx := r.Context()
 	dateFilter := strings.TrimSpace(r.URL.Query().Get("date"))
+	league := leagueFromRequest(r)
 	var (
 		rows *sql.Rows
 		err  error
@@ -547,16 +592,19 @@ func listRankingSnapshotsHandler(db *sql.DB, w http.ResponseWriter, r *http.Requ
 		}
 		rows, err = db.QueryContext(ctx, `
 			SELECT player_name, team_id, status, snapshot_date
-			FROM ranking_snapshots
-			WHERE snapshot_date = $1
+			FROM ranking_snapshots rs
+			JOIN teams t ON rs.team_id = t.id
+			WHERE rs.snapshot_date = $1 AND t.league_slug = $2
 			ORDER BY player_name
-		`, dateFilter)
+		`, dateFilter, league)
 	} else {
 		rows, err = db.QueryContext(ctx, `
 			SELECT player_name, team_id, status, snapshot_date
-			FROM ranking_snapshots
+			FROM ranking_snapshots rs
+			JOIN teams t ON rs.team_id = t.id
+			WHERE t.league_slug = $1
 			ORDER BY snapshot_date, player_name
-		`)
+		`, league)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -589,7 +637,7 @@ func listRankingSnapshotsHandler(db *sql.DB, w http.ResponseWriter, r *http.Requ
 func withJSON(db *sql.DB, h func(db *sql.DB, w http.ResponseWriter, r *http.Request)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-League-Slug")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -607,6 +655,7 @@ func addMatchHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
+	league := leagueFromRequest(r)
 	var req AddMatchReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", 400)
@@ -617,7 +666,35 @@ func addMatchHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var matchID int
-	err := db.QueryRowContext(r.Context(),
+	ctx := r.Context()
+
+	var team1League, team2League string
+	if err := db.QueryRowContext(ctx, `SELECT league_slug FROM teams WHERE id = $1`, req.Team1ID).Scan(&team1League); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "team1 not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	if err := db.QueryRowContext(ctx, `SELECT league_slug FROM teams WHERE id = $1`, req.Team2ID).Scan(&team2League); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "team2 not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	if team1League != team2League {
+		http.Error(w, "teams belong to different leagues", http.StatusBadRequest)
+		return
+	}
+	if team1League != league {
+		http.Error(w, "team does not belong to this league", http.StatusForbidden)
+		return
+	}
+
+	err := db.QueryRowContext(ctx,
 		`INSERT INTO matches (team1_id, team2_id, score1, score2) VALUES ($1,$2,$3,$4) RETURNING id`,
 		req.Team1ID, req.Team2ID, req.Score1, req.Score2).Scan(&matchID)
 	if err != nil {
@@ -633,6 +710,7 @@ func deleteMatchHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
+	league := leagueFromRequest(r)
 	var req DeleteMatchReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", 400)
@@ -642,10 +720,22 @@ func deleteMatchHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid match id", 400)
 		return
 	}
-	_, err := db.ExecContext(r.Context(),
-		`DELETE FROM matches WHERE id = $1`, req.ID)
+	ctx := r.Context()
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM matches m
+		USING teams t1, teams t2
+		WHERE m.team1_id = t1.id
+		  AND m.team2_id = t2.id
+		  AND m.id = $1
+		  AND t1.league_slug = $2
+		  AND t2.league_slug = $2
+	`, req.ID, league)
 	if err != nil {
 		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	if count, _ := res.RowsAffected(); count == 0 {
+		http.Error(w, "match not found", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -657,6 +747,7 @@ func addPlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
+	league := leagueFromRequest(r)
 	var req AddPlayerReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", 400)
@@ -668,6 +759,19 @@ func addPlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	var teamLeague string
+	if err := db.QueryRowContext(ctx, `SELECT league_slug FROM teams WHERE id = $1`, req.TeamID).Scan(&teamLeague); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "team not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "db error: "+err.Error(), 500)
+		return
+	}
+	if teamLeague != league {
+		http.Error(w, "team does not belong to this league", http.StatusForbidden)
+		return
+	}
 	err := execTx(ctx, db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 		INSERT INTO players (name, team_id, goals, assists)
@@ -694,6 +798,7 @@ func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB not configured", 500)
 		return
 	}
+	league := leagueFromRequest(r)
 	var req DeletePlayerReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", 400)
@@ -705,12 +810,15 @@ func deletePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := db.ExecContext(r.Context(),
-		`UPDATE players
+	ctx := r.Context()
+	res, err := db.ExecContext(ctx,
+		`UPDATE players p
 		SET deleted = TRUE,
 			updated_at = NOW()
-		WHERE name = $1 AND team_id = $2 AND deleted = FALSE`,
-		name, req.TeamID)
+		FROM teams t
+		WHERE p.name = $1 AND p.team_id = $2 AND p.deleted = FALSE
+			AND t.id = p.team_id AND t.league_slug = $3`,
+		name, req.TeamID, league)
 	if err != nil {
 		http.Error(w, "db error: "+err.Error(), 500)
 		return
@@ -743,6 +851,7 @@ func updatePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	oldName := strings.TrimSpace(req.OldName)
 	newName := strings.TrimSpace(req.NewName)
+	league := leagueFromRequest(r)
 	if req.TeamID == 0 || oldName == "" || newName == "" {
 		http.Error(w, "invalid player", http.StatusBadRequest)
 		return
@@ -751,11 +860,12 @@ func updatePlayerHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	err := execTx(ctx, db, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
-			SELECT id, deleted
-			FROM players
-			WHERE name = $1 AND team_id = $2
+			SELECT p.id, p.deleted
+			FROM players p
+			JOIN teams t ON p.team_id = t.id
+			WHERE p.name = $1 AND p.team_id = $2 AND t.league_slug = $3
 			FOR UPDATE
-		`, oldName, req.TeamID)
+		`, oldName, req.TeamID, league)
 
 		var (
 			playerID int
@@ -819,6 +929,7 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	league := leagueFromRequest(r)
 	var req snapshotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -840,36 +951,39 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	err := execTx(ctx, db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
-			SELECT id, $1, goals, assists, goals + assists
-			FROM players
-			WHERE deleted = FALSE
+			SELECT p.id, $1, p.goals, p.assists, p.goals + p.assists
+			FROM players p
+			JOIN teams t ON p.team_id = t.id
+			WHERE p.deleted = FALSE AND t.league_slug = $2
 			ON CONFLICT (player_id, snapshot_date)
 			DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
 				assists = player_stats.assists + EXCLUDED.assists,
 				points = player_stats.points + EXCLUDED.points
-		`, snapshotDate); err != nil {
+		`, snapshotDate, league); err != nil {
 			return err
 		}
 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
-			SELECT name, team_id, 'active', $1
-			FROM players
-			WHERE deleted = FALSE
+			SELECT p.name, p.team_id, 'active', $1
+			FROM players p
+			JOIN teams t ON p.team_id = t.id
+			WHERE p.deleted = FALSE AND t.league_slug = $2
 			ON CONFLICT (player_name, team_id, snapshot_date)
 			DO UPDATE SET status = EXCLUDED.status
-		`, snapshotDate); err != nil {
+		`, snapshotDate, league); err != nil {
 			return err
 		}
 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
-			SELECT name, team_id, 'missed', $1
-			FROM players
-			WHERE deleted = TRUE
+			SELECT p.name, p.team_id, 'missed', $1
+			FROM players p
+			JOIN teams t ON p.team_id = t.id
+			WHERE p.deleted = TRUE AND t.league_slug = $2
 			ON CONFLICT (player_name, team_id, snapshot_date)
 			DO UPDATE SET status = EXCLUDED.status
-		`, snapshotDate); err != nil {
+		`, snapshotDate, league); err != nil {
 			return err
 		}
 
@@ -878,12 +992,19 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			SET goals = 0,
 				assists = 0,
 				updated_at = NOW()
-			WHERE deleted = FALSE
-		`); err != nil {
+			WHERE deleted = FALSE AND team_id IN (SELECT id FROM teams WHERE league_slug = $1)
+		`, league); err != nil {
 			return err
 		}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM matches`); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM matches m
+			USING teams t1, teams t2
+			WHERE m.team1_id = t1.id
+			  AND m.team2_id = t2.id
+			  AND t1.league_slug = $1
+			  AND t2.league_slug = $1
+		`, league); err != nil {
 			return err
 		}
 

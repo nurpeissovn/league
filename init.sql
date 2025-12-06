@@ -6,6 +6,18 @@ CREATE TABLE IF NOT EXISTS teams (
 
 ALTER TABLE teams
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE teams
+  ADD COLUMN IF NOT EXISTS league_slug TEXT NOT NULL DEFAULT 'default';
+
+DO $$
+BEGIN
+  ALTER TABLE teams DROP CONSTRAINT teams_name_key;
+EXCEPTION WHEN undefined_object THEN
+  NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS teams_name_league_slug_idx
+  ON teams(name, league_slug);
 
 CREATE TABLE IF NOT EXISTS players (
   id SERIAL PRIMARY KEY,

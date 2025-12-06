@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>League Registration</title>
+  <script src="/auth.js"></script>
   <style>
     body { font-family: Arial; background: #f0f4ff; padding: 20px; }
     h1 { text-align: center; }
@@ -22,6 +23,13 @@
 </head>
 <body>
   <h1>🏟️ League Registration</h1>
+  <div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+    <div>
+      <div style="font-size:0.9rem; color:#6b7280;">Current league</div>
+      <div id="registerLeagueName" style="font-weight:700;">Loading…</div>
+    </div>
+    <button type="button" onclick="switchLeague()" style="padding:6px 12px; border-radius:10px; border:none; background:#f97316; color:#fff; font-weight:700; cursor:pointer;">Switch</button>
+  </div>
 
   <div class="card">
     <h2>Add Team</h2>
@@ -54,6 +62,25 @@
       teamId: null,
       player: null
     };
+    const activeLeague = window.LeagueAuth?.requireLeague();
+    const apiFetch = (...args) => window.LeagueAuth ? window.LeagueAuth.leagueFetch(...args) : fetch(...args);
+
+    function setLeagueLabel() {
+      const label = document.getElementById("registerLeagueName");
+      if (label && activeLeague?.name) {
+        label.textContent = activeLeague.name;
+      } else if (label) {
+        label.textContent = "Unknown league";
+      }
+    }
+
+    function switchLeague() {
+      window.LeagueAuth?.clearLeague();
+      const next = encodeURIComponent(window.location.pathname);
+      window.location.href = `/login.html?next=${next}`;
+    }
+
+    setLeagueLabel();
 
     function escapeHtml(value) {
       return value
@@ -71,8 +98,8 @@
     async function loadTeamsFromDB() {
       try {
         const [teamRes, playerRes] = await Promise.all([
-          fetch("/api/list-teams"),
-          fetch("/api/players")
+          apiFetch("/api/list-teams"),
+          apiFetch("/api/players")
         ]);
 
         if (!teamRes.ok) {
@@ -122,7 +149,7 @@
       }
 
       try {
-        const res = await fetch("/api/add-team", {
+        const res = await apiFetch("/api/add-team", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ name })
@@ -164,7 +191,7 @@
       }
       
       try {
-        const res = await fetch("/api/add-player", {
+        const res = await apiFetch("/api/add-player", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
@@ -199,7 +226,7 @@
       if (!confirm(`Remove ${playerName} from ${team.name}?`)) return;
       
       try {
-        const res = await fetch("/api/delete-player", {
+        const res = await apiFetch("/api/delete-player", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
@@ -320,7 +347,7 @@
       }
 
       try {
-        const res = await fetch("/api/update-team", {
+        const res = await apiFetch("/api/update-team", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
@@ -376,7 +403,7 @@
       }
 
       try {
-        const res = await fetch("/api/update-player", {
+        const res = await apiFetch("/api/update-player", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({

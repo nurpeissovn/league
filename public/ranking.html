@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>League Player Rankings</title>
+  <script src="/auth.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -44,6 +45,13 @@
 </head>
 <body>
   <h1>🏆 Player Rankings</h1>
+  <div class="glass p-4 mb-4 w-full max-w-3xl flex items-center justify-between">
+    <div>
+      <div class="text-sm text-slate-500">Current league</div>
+      <div id="rankingLeagueName" class="text-lg font-bold text-slate-800">Loading…</div>
+    </div>
+    <button type="button" onclick="switchLeague()" class="px-4 py-2 rounded-full bg-indigo-100 text-indigo-700 font-semibold hover:bg-indigo-200 transition">Switch</button>
+  </div>
 
   <div id="rankingTable" class="glass p-6">
     <table class="text-center">
@@ -58,6 +66,25 @@
     let rankingRows = [];
     let dateColumns = [];
     let sortDescending = true;
+    const activeLeague = window.LeagueAuth?.requireLeague();
+    const apiFetch = (...args) => window.LeagueAuth ? window.LeagueAuth.leagueFetch(...args) : fetch(...args);
+
+    function setLeagueLabel() {
+      const label = document.getElementById('rankingLeagueName');
+      if (label && activeLeague?.name) {
+        label.textContent = activeLeague.name;
+      } else if (label) {
+        label.textContent = 'Unknown league';
+      }
+    }
+
+    function switchLeague() {
+      window.LeagueAuth?.clearLeague();
+      const next = encodeURIComponent(window.location.pathname);
+      window.location.href = `/login.html?next=${next}`;
+    }
+
+    setLeagueLabel();
 
     function normalizeDateStr(value) {
       if (!value) return '';
@@ -78,9 +105,9 @@
     async function loadRanking() {
       try {
         const [playersRes, rankingRes, snapshotRes] = await Promise.all([
-          fetch('/api/players'),
-          fetch('/ranking'),
-          fetch('/api/ranking-snapshots')
+          apiFetch('/api/players'),
+          apiFetch('/ranking'),
+          apiFetch('/api/ranking-snapshots')
         ]);
 
         if (!playersRes.ok) throw new Error(await playersRes.text());

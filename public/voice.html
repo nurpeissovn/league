@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Voice Stats Update</title>
+  <script src="/auth.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; padding: 32px; background: #f6f8fb; color: #1f2933; display:flex; justify-content:center; }
     .wrapper { max-width: 640px; width: 100%; background:#fff; border-radius:16px; box-shadow:0 18px 48px rgba(15,23,42,0.12); padding:24px; }
@@ -22,6 +23,13 @@
 <body>
   <div class="wrapper">
     <h1>Update Stats by Voice</h1>
+    <div style="display:flex; align-items:center; justify-content:space-between; background:#f1f5f9; border-radius:12px; padding:10px 14px; margin-bottom:12px;">
+      <div>
+        <div style="font-size:0.9rem; color:#475569;">Current league</div>
+        <div id="voiceLeagueName" style="font-weight:700; color:#0f172a;">Loading…</div>
+      </div>
+      <button type="button" onclick="switchLeague()" style="padding:8px 14px; border:none; border-radius:10px; background:#0ea5e9; color:white; font-weight:700; cursor:pointer;">Switch</button>
+    </div>
     <p>Tap the microphone, describe the play, then send it to the server.</p>
     <div class="controls">
       <button id="voiceMic" type="button" class="mic">🎙️ Start Recording</button>
@@ -34,6 +42,23 @@
     <div id="voiceResponse" class="response"></div>
   </div>
   <script>
+    const activeLeague = window.LeagueAuth?.requireLeague();
+    const apiFetch = (...args) => window.LeagueAuth ? window.LeagueAuth.leagueFetch(...args) : fetch(...args);
+    function setLeagueLabel() {
+      const label = document.getElementById('voiceLeagueName');
+      if (label && activeLeague?.name) {
+        label.textContent = activeLeague.name;
+      } else if (label) {
+        label.textContent = 'Unknown league';
+      }
+    }
+    function switchLeague() {
+      window.LeagueAuth?.clearLeague();
+      const next = encodeURIComponent(window.location.pathname);
+      window.location.href = `/login.html?next=${next}`;
+    }
+    setLeagueLabel();
+
     const micBtn = document.getElementById('voiceMic');
     const sendBtn = document.getElementById('voiceSend');
     const retryBtn = document.getElementById('voiceRetry');
@@ -229,7 +254,7 @@
         sendBtn.disabled = true;
         if (statusEl) statusEl.textContent = 'Sending transcript…';
         try {
-          const res = await fetch('/api/voice', {
+          const res = await apiFetch('/api/voice', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: payload })
@@ -269,7 +294,7 @@
         try {
           const formData = new FormData();
           formData.append('audio', fallbackAudioBlob, 'recording.webm');
-          const res = await fetch('/api/voice/audio', {
+          const res = await apiFetch('/api/voice/audio', {
             method: 'POST',
             body: formData
           });
