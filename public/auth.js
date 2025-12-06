@@ -4,7 +4,7 @@
   const STORAGE_KEY = "league-session";
   const DEFAULT_REDIRECT = "/";
   const LEAGUES = [
-    { slug: "leagueDostyq", name: "League Dostyq", password: "pass1" },
+    { slug: "leagueDostyq", name: "League Dostyq", password: "pass12" },
     { slug: "league-one", name: "League One", password: "pass2" },
     { slug: "league-two", name: "League Two", password: "pass3" }
 
