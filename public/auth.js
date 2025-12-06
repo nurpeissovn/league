@@ -5,7 +5,9 @@
   const DEFAULT_REDIRECT = "/";
   const LEAGUES = [
     { slug: "league-one", name: "League One", password: "pass1" },
+    { slug: "league-two", name: "League Two", password: "pass2" },
     { slug: "league-two", name: "League Two", password: "pass2" }
+
   ];
 
   function sanitizeSlug(slug) {
