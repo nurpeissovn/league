@@ -3,6 +3,8 @@
 (function () {
   const STORAGE_KEY = "league-session";
   const DEFAULT_REDIRECT = "/";
+  // Bump this when you change passwords to force re-login on all devices.
+  const AUTH_VERSION = "1";
   const LEAGUES = [
     { slug: "leagueDostyq", name: "League Dostyq", password: "pass12" },
     { slug: "league-one", name: "League One", password: "pass2" },
@@ -27,7 +29,13 @@
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.slug && parsed.name) return parsed;
+      if (parsed && parsed.slug && parsed.name) {
+        if (parsed.version === AUTH_VERSION) {
+          return parsed;
+        }
+        // invalidate stale session when version changes
+        clearLeague();
+      }
     } catch (err) {
       console.warn("Failed to read stored league", err);
     }
@@ -36,7 +44,7 @@
 
   function saveLeague(league) {
     if (!league || !league.slug) return;
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(league));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...league, version: AUTH_VERSION }));
   }
 
   function clearLeague() {
@@ -80,6 +88,7 @@
     matchPassword,
     requireLeague,
     leagueFetch,
+    version: AUTH_VERSION,
     STORAGE_KEY,
     DEFAULT_REDIRECT
   };
