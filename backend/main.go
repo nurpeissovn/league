@@ -50,6 +50,13 @@ type UpdateTeamReq struct {
 	NewName string `json:"new_name"`
 }
 
+type UpdateSnapshotStatusReq struct {
+	PlayerName   string `json:"player_name"`
+	TeamID       int    `json:"team_id"`
+	SnapshotDate string `json:"snapshot_date"`
+	Status       string `json:"status"`
+}
+
 const defaultLeagueSlug = "default"
 
 var (
@@ -94,6 +101,7 @@ func main() {
 	mux.Handle("/api/update-player", withJSON(db, updatePlayerHandler))
 	mux.Handle("/api/delete-player", withJSON(db, deletePlayerHandler))
 	mux.Handle("/api/snapshot", withJSON(db, snapshotHandler))
+	mux.Handle("/api/update-snapshot-status", withJSON(db, updateSnapshotStatusHandler))
 
 	// Team routes
 	mux.Handle("/api/add-team", withJSON(db, addTeamHandler))
@@ -1019,6 +1027,60 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"snapshot_date": snapshotDate,
 	})
+}
+
+func updateSnapshotStatusHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		http.Error(w, "DB not configured", http.StatusInternalServerError)
+		return
+	}
+
+	var req UpdateSnapshotStatusReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	req.PlayerName = strings.TrimSpace(req.PlayerName)
+	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
+	req.SnapshotDate = strings.TrimSpace(req.SnapshotDate)
+	league := leagueFromRequest(r)
+
+	if req.PlayerName == "" || req.TeamID == 0 || req.SnapshotDate == "" {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
+	if req.Status != "active" && req.Status != "missed" {
+		http.Error(w, "invalid status", http.StatusBadRequest)
+		return
+	}
+	if _, err := time.Parse("2006-01-02", req.SnapshotDate); err != nil {
+		http.Error(w, "invalid date", http.StatusBadRequest)
+		return
+	}
+
+	var dto rankingSnapshotDTO
+	row := db.QueryRowContext(r.Context(), `
+		INSERT INTO ranking_snapshots (player_name, team_id, status, snapshot_date)
+		SELECT $1, $2, $3, $4
+		FROM teams t
+		WHERE t.id = $2 AND t.league_slug = $5
+		ON CONFLICT (player_name, team_id, snapshot_date)
+		DO UPDATE SET status = EXCLUDED.status
+		RETURNING player_name, team_id, status, snapshot_date
+	`, req.PlayerName, req.TeamID, req.Status, req.SnapshotDate, league)
+
+	if err := row.Scan(&dto.PlayerName, &dto.TeamID, &dto.Status, &dto.SnapshotDate); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "team not found for league", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(dto)
 }
 
 // ---------- static helpers ----------

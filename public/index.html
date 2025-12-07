@@ -355,6 +355,17 @@ th { background: #f9f9f9; }
   </table>
 </div>
 
+<div class="card">
+  <h2>📅 Snapshot Status</h2>
+  <p id="snapshotInfo" style="margin: 0 0 10px; color: #4b5563;">Latest snapshot: loading…</p>
+  <table id="snapshotTable">
+    <thead>
+      <tr><th>Player</th><th>Team</th><th>Date</th><th>Status</th><th>Update</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
 <div id="statsOverlay" class="modal-overlay hidden" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="statsModalTitle">
     <button class="modal-close" type="button" aria-label="Close" onclick="closeStatsModal()">&times;</button>
@@ -413,6 +424,8 @@ let currentPlayerPool = [];
 let modalSelectedGoal = null;
 let modalSelectedAssist = null;
 let pendingResetDate = null;
+let snapshotRows = [];
+let latestSnapshotDate = null;
 const activeLeague = window.LeagueAuth?.requireLeague();
 const apiFetch = (...args) => window.LeagueAuth ? window.LeagueAuth.leagueFetch(...args) : fetch(...args);
 
@@ -432,6 +445,13 @@ function switchLeague() {
 }
 
 setLeagueLabel();
+
+function normalizeDateStr(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
 
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -454,6 +474,8 @@ function clearState() {
   autoSuggestEnabled = true;
   updateAutoSuggestButton();
   currentPlayerPool = [];
+   snapshotRows = [];
+   latestSnapshotDate = null;
 
   ["score1", "score2"].forEach(id => {
     const input = document.getElementById(id);
@@ -504,6 +526,21 @@ async function loadAllData(options = {}) {
           history.push({ id: m.id, t1, s1: m.score1, t2, s2: m.score2 });
         }
       } catch {}
+
+      try {
+        const resS = await fetchWithRetry("/api/ranking-snapshots");
+        const dbSnapshots = await resS.json(); // [{player_name, team_id, status, snapshot_date}]
+        snapshotRows = Array.isArray(dbSnapshots) ? dbSnapshots : [];
+        const dates = snapshotRows
+          .map(s => normalizeDateStr(s.snapshot_date))
+          .filter(Boolean)
+          .sort((a, b) => b.localeCompare(a));
+        latestSnapshotDate = dates[0] || null;
+      } catch (e) {
+        console.warn("Failed to load snapshots", e);
+        snapshotRows = [];
+        latestSnapshotDate = null;
+      }
 
       nextMatchSuggestion = suggestNextMatch(teams, history);
       if (autoSuggestEnabled && nextMatchSuggestion) {
@@ -929,6 +966,93 @@ function fireworks(text = "") {
   }
 }
 
+async function changeSnapshotStatus(selectEl) {
+  if (!selectEl) return;
+  const player = selectEl.dataset.player;
+  const teamId = Number(selectEl.dataset.teamId);
+  const date = selectEl.dataset.date;
+  const status = selectEl.value;
+  const original = selectEl.dataset.original || selectEl.value;
+
+  selectEl.disabled = true;
+  try {
+    const res = await apiFetch("/api/update-snapshot-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        player_name: player,
+        team_id: teamId,
+        snapshot_date: date,
+        status
+      })
+    });
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Failed to update status");
+    }
+    const updated = await res.json();
+    const normDate = normalizeDateStr(updated.snapshot_date);
+    snapshotRows = snapshotRows.map((row) => {
+      if (
+        normalizeDateStr(row.snapshot_date) === normDate &&
+        row.player_name === updated.player_name &&
+        row.team_id === updated.team_id
+      ) {
+        return { ...row, status: updated.status };
+      }
+      return row;
+    });
+    render();
+  } catch (err) {
+    alert(err.message || err);
+    selectEl.value = original;
+  } finally {
+    selectEl.disabled = false;
+  }
+}
+
+function renderSnapshotTable() {
+  const tbody = document.querySelector("#snapshotTable tbody");
+  const info = document.getElementById("snapshotInfo");
+  if (!tbody) return;
+
+  if (!latestSnapshotDate) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center" style="color:#9ca3af;">No snapshots yet.</td></tr>`;
+    if (info) info.textContent = "Latest snapshot: none";
+    return;
+  }
+
+  const rows = snapshotRows.filter(
+    (row) => normalizeDateStr(row.snapshot_date) === latestSnapshotDate
+  );
+  if (info) info.textContent = `Latest snapshot: ${latestSnapshotDate}`;
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center" style="color:#9ca3af;">No entries for ${latestSnapshotDate}.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows
+    .map((row) => {
+      const teamName = teamIdToName[row.team_id] || "Unknown";
+      const selectedActive = row.status === "active" ? "selected" : "";
+      const selectedMissed = row.status === "missed" ? "selected" : "";
+      return `<tr>
+        <td>${row.player_name}</td>
+        <td>${teamName}</td>
+        <td>${latestSnapshotDate}</td>
+        <td>
+          <select data-player="${row.player_name}" data-team-id="${row.team_id}" data-date="${latestSnapshotDate}" data-original="${row.status}" onchange="changeSnapshotStatus(this)">
+            <option value="active" ${selectedActive}>Active</option>
+            <option value="missed" ${selectedMissed}>Missed</option>
+          </select>
+        </td>
+        <td><small style="color:#6b7280;">Save updates instantly</small></td>
+      </tr>`;
+    })
+    .join("");
+}
+
 function render() {
   // cache current UI choices first (in case called without setting sticky)
   const t1Sel = document.getElementById("team1");
@@ -1020,6 +1144,7 @@ function render() {
 
   applyNextMatchSuggestion();
   syncScorePickers();
+  renderSnapshotTable();
 }
 
 function suggestNextMatch(teamRecords, matchHistory) {
