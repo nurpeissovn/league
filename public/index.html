@@ -330,7 +330,7 @@ th { background: #f9f9f9; }
     <h2>👤 Player Statistics</h2>
     <table id="playerTable">
       <thead>
-        <tr><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Total (G+A)</th><th>Actions</th></tr>
+        <tr><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Total (G+A)</th></tr>
       </thead>
       <tbody></tbody>
     </table>
@@ -1000,14 +1000,12 @@ function render() {
       if (idx === 0) bg = "background-color: gold; font-weight:bold;";
       else if (idx === 1) bg = "background-color: silver; font-weight:bold;";
       else if (idx === 2) bg = "background-color: #cd7f32; font-weight:bold;";
-      const safeId = name.replace(/[^a-zA-Z0-9_-]/g, "_");
       return `<tr style="${bg}">
         <td>${name}</td>
         <td>${p.team}</td>
-        <td><input type="number" id="goals-${safeId}" value="${p.goals}" min="0" style="width:70px"></td>
-        <td><input type="number" id="assists-${safeId}" value="${p.assists}" min="0" style="width:70px"></td>
+        <td>⚽ ${p.goals}</td>
+        <td>🎯 ${p.assists}</td>
         <td>${total}</td>
-        <td><button class="btn-base btn-secondary" type="button" onclick="savePlayerRow('${name.replace(/'/g, "\\'")}')"><span class="icon">💾</span>Save</button></td>
       </tr>`;
     }).join("");
 
@@ -1028,42 +1026,6 @@ function render() {
 
   applyNextMatchSuggestion();
   syncScorePickers();
-}
-
-async function savePlayerRow(name) {
-  const player = players[name];
-  if (!player) {
-    alert("Player not found");
-    return;
-  }
-  const safeId = name.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const goalsInput = document.getElementById(`goals-${safeId}`);
-  const assistsInput = document.getElementById(`assists-${safeId}`);
-  const goals = Math.max(0, parseInt(goalsInput?.value, 10) || 0);
-  const assists = Math.max(0, parseInt(assistsInput?.value, 10) || 0);
-
-  try {
-    const res = await apiFetch("/api/add-player", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        team_id: player.teamId,
-        goals,
-        assists
-      })
-    });
-    if (!res.ok) {
-      const msg = await res.text();
-      throw new Error(msg || "Failed to save player");
-    }
-    player.goals = goals;
-    player.assists = assists;
-    render();
-    fireworks("Saved ✅");
-  } catch (err) {
-    alert(err.message || err);
-  }
 }
 
 function suggestNextMatch(teamRecords, matchHistory) {

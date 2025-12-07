@@ -959,9 +959,13 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	err := execTx(ctx, db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO player_stats (player_id, snapshot_date, goals, assists, points)
-			SELECT p.id, $1, p.goals, p.assists, p.goals + p.assists
+			SELECT p.id, $1,
+				COALESCE(po.goals, p.goals),
+				COALESCE(po.assists, p.assists),
+				COALESCE(po.goals, p.goals) + COALESCE(po.assists, p.assists)
 			FROM players p
 			JOIN teams t ON p.team_id = t.id
+			LEFT JOIN player_overrides po ON po.player_id = p.id
 			WHERE p.deleted = FALSE AND t.league_slug = $2
 			ON CONFLICT (player_id, snapshot_date)
 			DO UPDATE SET goals = player_stats.goals + EXCLUDED.goals,
@@ -1012,6 +1016,15 @@ func snapshotHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 			  AND m.team2_id = t2.id
 			  AND t1.league_slug = $1
 			  AND t2.league_slug = $1
+		`, league); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM player_overrides
+			WHERE player_id IN (
+				SELECT p.id FROM players p JOIN teams t ON p.team_id = t.id WHERE t.league_slug = $1
+			)
 		`, league); err != nil {
 			return err
 		}
