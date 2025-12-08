@@ -4,7 +4,7 @@
   const STORAGE_KEY = "league-session";
   const DEFAULT_REDIRECT = "/";
   // Bump this when you change passwords to force re-login on all devices.
-  const AUTH_VERSION = "1";
+  const AUTH_VERSION = "2";
   const LEAGUES = [
     { slug: "leagueDostyq", name: "League Dostyq", password: "pass12" },
     { slug: "league-one", name: "League One", password: "pass2" },
