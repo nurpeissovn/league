@@ -8,7 +8,9 @@
   const LEAGUES = [
     { slug: "leagueDostyq", name: "League Dostyq", password: "pass12" },
     { slug: "league-one", name: "League One", password: "pass2" },
-    { slug: "league-two", name: "League Two", password: "pass3" }
+    { slug: "league-two", name: "League Two", password: "pass3" },
+    { slug: "Dostyq2026", name: "Dostyq 2026", password: "D2026" }
+
 
   ];
 
